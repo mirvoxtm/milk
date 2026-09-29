@@ -1,0 +1,20 @@
+# Optional: run milk as a systemd user service inside an X session managed
+# by another window manager (dwm/openbox). When milk is the window manager
+# itself, start it from ~/.xinitrc instead (exec .../milk start --foreground).
+# Copy to ~/.config/systemd/user/milk.service, edit the path below, then:
+#   systemctl --user daemon-reload && systemctl --user enable --now milk
+# Your ~/.xinitrc (or openbox autostart) must export DISPLAY to systemd first:
+#   systemctl --user import-environment DISPLAY XAUTHORITY
+[Unit]
+Description=milk: per-workspace wallpapers, shortcuts, indicator and bar
+PartOf=graphical-session.target
+After=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=%h/Documentos/Temenos/milk/milk start --foreground --no-wm
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=graphical-session.target

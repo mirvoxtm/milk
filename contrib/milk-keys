@@ -1,0 +1,57 @@
+#!/bin/sh
+# Hardware keys for milk (bound by the window manager to the XF86 keysyms).
+#   milk-keys volume-up|volume-down|mute|brightness-up|brightness-down [step%]
+step=${2:-5}
+
+volume() {
+    if command -v wpctl >/dev/null 2>&1; then
+        case $1 in
+            up)   wpctl set-volume -l 1.0 @DEFAULT_AUDIO_SINK@ "$step%+" ;;
+            down) wpctl set-volume @DEFAULT_AUDIO_SINK@ "$step%-" ;;
+            mute) wpctl set-mute @DEFAULT_AUDIO_SINK@ toggle ;;
+        esac
+    elif command -v pactl >/dev/null 2>&1; then
+        case $1 in
+            up)   pactl set-sink-volume @DEFAULT_SINK@ "+$step%" ;;
+            down) pactl set-sink-volume @DEFAULT_SINK@ "-$step%" ;;
+            mute) pactl set-sink-mute @DEFAULT_SINK@ toggle ;;
+        esac
+    else
+        case $1 in
+            up)   amixer -q set Master "$step%+" unmute ;;
+            down) amixer -q set Master "$step%-" ;;
+            mute) amixer -q set Master toggle ;;
+        esac
+    fi
+}
+
+brightness() {
+    if command -v brightnessctl >/dev/null 2>&1; then
+        [ "$1" = up ] && exec brightnessctl -q set "$step%+"
+        exec brightnessctl -q set "$step%-"
+    fi
+    dev=$(ls /sys/class/backlight 2>/dev/null | head -n 1)
+    [ -n "$dev" ] || exit 0
+    sys="/sys/class/backlight/$dev"
+    cur=$(cat "$sys/brightness"); max=$(cat "$sys/max_brightness")
+    delta=$((max * step / 100)); [ "$delta" -lt 1 ] && delta=1
+    if [ "$1" = up ]; then new=$((cur + delta)); else new=$((cur - delta)); fi
+    [ "$new" -gt "$max" ] && new=$max
+    [ "$new" -lt 1 ] && new=1   # never switch the panel fully off
+    if [ -w "$sys/brightness" ]; then
+        echo "$new" > "$sys/brightness"
+    else
+        # systemd-logind lets the active session change its backlight without root.
+        busctl call org.freedesktop.login1 /org/freedesktop/login1/session/auto \
+            org.freedesktop.login1.Session SetBrightness ssu backlight "$dev" "$new"
+    fi
+}
+
+case $1 in
+    volume-up)       volume up ;;
+    volume-down)     volume down ;;
+    mute)            volume mute ;;
+    brightness-up)   brightness up ;;
+    brightness-down) brightness down ;;
+    *) echo "usage: $0 volume-up|volume-down|mute|brightness-up|brightness-down [step%]" >&2; exit 2 ;;
+esac

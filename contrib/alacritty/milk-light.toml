@@ -1,0 +1,71 @@
+# milk colours for Alacritty: the cream, warm-grey and espresso palette of the
+# milk bar (bar.theme in milk.json), with ANSI colours tuned to stay readable
+# on the light background. Imported by ~/.config/alacritty/milk.toml, which the
+# window manager passes to Alacritty (wm.terminal), so other sessions keep
+# their own theme.
+
+[window]
+padding = { x = 12, y = 10 }
+dynamic_padding = true
+opacity = 1.0
+
+[colors]
+draw_bold_text_with_bright_colors = false
+
+[colors.primary]
+background = "#F5EEE6"   # bar background
+foreground = "#3C3A38"   # bar text
+dim_foreground = "#6E655C"
+bright_foreground = "#231F1C"
+
+[colors.cursor]
+text = "#F5EEE6"
+cursor = "#4A3F35"       # bar accent
+
+[colors.vi_mode_cursor]
+text = "#F5EEE6"
+cursor = "#8A6A4F"
+
+[colors.selection]
+text = "CellForeground"
+background = "#E2D6C8"   # a shade of the bar surface
+
+[colors.search.matches]
+foreground = "#F5EEE6"
+background = "#8A6A4F"
+
+[colors.search.focused_match]
+foreground = "#F5EEE6"
+background = "#4A3F35"
+
+[colors.footer_bar]
+foreground = "#F5EEE6"
+background = "#4A3F35"
+
+[colors.hints.start]
+foreground = "#F5EEE6"
+background = "#B5473A"
+
+[colors.hints.end]
+foreground = "#4A3F35"
+background = "#E9E0D6"
+
+[colors.normal]
+black   = "#3C3A38"
+red     = "#B5473A"   # bar warning colour
+green   = "#5F7A3E"
+yellow  = "#9C6A12"
+blue    = "#3E6C8C"
+magenta = "#8B4F7E"
+cyan    = "#377A72"
+white   = "#A89E94"   # bar muted colour
+
+[colors.bright]
+black   = "#6E655C"
+red     = "#C4584A"
+green   = "#6E8C48"
+yellow  = "#B07C1E"
+blue    = "#4C7FA2"
+magenta = "#9D6190"
+cyan    = "#468D84"
+white   = "#D8CEC3"

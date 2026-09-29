@@ -1,0 +1,179 @@
+{
+  "appearance": {
+    "animationScale": 0.7,
+    "theme": "milk",
+    "variant": "dark"
+  },
+  "bar": {
+    "center": [
+      "workspaces",
+      "media"
+    ],
+    "clockFormat": "%H:%M",
+    "commands": {
+      "bluetooth": "",
+      "clipboard": "",
+      "launcher": "rofi -show drun -theme \"$MILK_ROFI_THEME\"",
+      "network": "nm-connection-editor",
+      "notifications": "",
+      "recorder": "",
+      "session": ""
+    },
+    "dateFormat": "%a %d %b",
+    "enabled": true,
+    "end": [
+      "clipboard",
+      "network",
+      "bluetooth",
+      "volume",
+      "brightness",
+      "battery",
+      "date",
+      "clock",
+      "notifications",
+      "settings",
+      "session"
+    ],
+    "font": "sans",
+    "fontSize": 14,
+    "height": 40,
+    "iconFontFile": "/usr/share/noctalia/assets/fonts/noctalia-tabler.ttf",
+    "iconSize": 19,
+    "launcherIcon": null,
+    "locale": "pt-BR",
+    "margin": 10,
+    "mediaIdleText": "Nada Reproduzindo",
+    "monitor": "primary",
+    "opacity": 1.0,
+    "overrideRedirect": "auto",
+    "position": "bottom",
+    "radius": 16,
+    "start": [
+      "launcher",
+      "active_window"
+    ],
+    "style": "floating",
+    "theme": {
+      "accent": "#D9C3A5",
+      "accentForeground": "#211D1A",
+      "background": "#211D1A",
+      "foreground": "#EDE3D8",
+      "muted": "#8C8279",
+      "surface": "#2E2925",
+      "warning": "#E07A6A"
+    }
+  },
+  "keyboard": {
+    "layout": "br",
+    "variant": "thinkpad"
+  },
+  "linux": {
+    "indicator": {
+      "duration": 2.4,
+      "enabled": true,
+      "font": "sans:bold",
+      "fontSize": 11,
+      "position": "bottom"
+    },
+    "shortcuts": {
+      "font": "sans",
+      "fontSize": 9,
+      "iconSize": 48,
+      "iconTheme": null,
+      "margins": [
+        8,
+        8,
+        8,
+        8
+      ],
+      "mode": "layer",
+      "monitor": "primary",
+      "singleClick": false
+    },
+    "wallpaperMode": "fill"
+  },
+  "paths": {
+    "common": "Common",
+    "wallpaperCache": "WallpaperCache",
+    "wallpapers": "Wallpapers"
+  },
+  "version": 1,
+  "wm": {
+    "animation": 180,
+    "bindings": {
+      "super+w": "brave"
+    },
+    "borderColor": "#3A342F",
+    "borderWidth": 0,
+    "cornerRadius": 10,
+    "enabled": true,
+    "focusColor": "#D9C3A5",
+    "focusFollowsMouse": true,
+    "gaps": 12,
+    "launcher": "rofi -show drun -theme \"$MILK_ROFI_THEME\"",
+    "masterCount": 1,
+    "masterFactor": 0.55,
+    "modKey": "super",
+    "resizeHints": true,
+    "rules": [
+      {
+        "class": "Gimp",
+        "floating": true
+      },
+      {
+        "class": "Firefox",
+        "tags": 2
+      }
+    ],
+    "screenshot": "",
+    "tagCount": 9,
+    "terminal": "alacritty --config-file ~/.config/alacritty/milk.toml"
+  },
+  "workspaces": {
+    "1": {
+      "folder": "Area1",
+      "name": "",
+      "wallpaper": null
+    },
+    "2": {
+      "folder": "Area2",
+      "name": "",
+      "wallpaper": null
+    },
+    "3": {
+      "folder": "Area3",
+      "name": "",
+      "wallpaper": null
+    },
+    "4": {
+      "folder": "Area4",
+      "name": "",
+      "wallpaper": null
+    },
+    "5": {
+      "folder": "Area5",
+      "name": "",
+      "wallpaper": null
+    },
+    "6": {
+      "name": "",
+      "folder": "Area6",
+      "wallpaper": null
+    },
+    "7": {
+      "name": "",
+      "folder": "Area7",
+      "wallpaper": null
+    },
+    "8": {
+      "name": "",
+      "folder": "Area8",
+      "wallpaper": null
+    },
+    "9": {
+      "name": "",
+      "folder": "Area9",
+      "wallpaper": null
+    }
+  }
+}

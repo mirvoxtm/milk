@@ -1,0 +1,6 @@
+[Desktop Entry]
+Name=milk
+Comment=milk: window manager, bar and per-workspace desktop
+Exec=@SESSION@
+DesktopNames=milk
+Type=Application

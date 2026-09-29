@@ -1,0 +1,772 @@
+// Package config: milk.json loader.
+//
+// Mirrors windows/src/Config.ps1 (same file, same validation rules) and adds
+// two optional sections used only on Linux: "linux" (wallpaper mode, indicator,
+// shortcut rendering) and "bar" (the status bar).
+package config
+
+import "core:encoding/json"
+import "core:fmt"
+import "core:os"
+import "core:strconv"
+import "core:strings"
+
+WALLPAPER_MODES     :: []string{"fill", "scale", "center", "max", "tile"}
+SHORTCUT_MODES      :: []string{"layer", "folder", "none"}
+INDICATOR_POSITIONS :: []string{"center", "top", "bottom"}
+BAR_POSITIONS       :: []string{"top", "bottom"}
+OVERRIDE_MODES      :: []string{"auto", "always", "never"}
+// Globals (not constants): a constant slice would be re-materialised on the
+// stack of whoever uses it, and default_bar() hands these out to the loader.
+@(rodata) DEFAULT_BAR_START  := []string{"launcher", "active_window"}
+@(rodata) DEFAULT_BAR_CENTER := []string{"workspaces", "media"}
+@(rodata) DEFAULT_BAR_END    := []string{"clipboard", "network", "bluetooth", "volume", "brightness", "battery", "date", "clock", "notifications", "settings", "session"}
+BAR_WIDGETS         :: []string{"launcher", "active_window", "workspaces", "media", "spacer", "notifications", "clipboard",
+                                 "recorder", "network", "bluetooth", "volume", "brightness", "battery", "date", "clock", "settings", "session"}
+
+Workspace :: struct {
+	index:     int,
+	name:      string,
+	folder:    string,
+	wallpaper: string, // "" when null / not configured
+}
+
+Paths :: struct {
+	common:          string,
+	wallpapers:      string,
+	wallpaper_cache: string,
+}
+
+Indicator_Options :: struct {
+	enabled:   bool,
+	duration:  f64,    // seconds
+	font:      string, // fontconfig pattern
+	font_size: f64,    // points (96 DPI)
+	position:  string, // center | top | bottom
+}
+
+Shortcut_Options :: struct {
+	mode:         string, // layer | folder | none
+	icon_size:    int,
+	single_click: bool,
+	font:         string,
+	font_size:    f64,
+	icon_theme:   string, // "" = detect
+	margins:      [4]int, // top, right, bottom, left
+	monitor:      string, // "primary" or a RandR output name
+}
+
+Linux_Options :: struct {
+	wallpaper_mode: string,
+	indicator:      Indicator_Options,
+	shortcuts:      Shortcut_Options,
+}
+
+Bar_Theme :: struct {
+	background:        string, // hex colours
+	foreground:        string,
+	muted:             string,
+	accent:            string,
+	accent_foreground: string,
+	surface:           string,
+	warning:           string,
+}
+
+Bar_Options :: struct {
+	enabled:               bool,
+	height:                int,
+	position:              string,   // top | bottom
+	monitor:               string,   // "primary" or output name
+	override_redirect:     string,   // auto | always | never  (auto: yes on dwm, no elsewhere)
+	opacity:               f64,      // 0..1, blended over the wallpaper
+	font:                  string,
+	font_size:             int,      // pixels
+	icon_font_file:        string,   // Tabler icon font (Noctalia's), "" = disabled
+	icon_font:             string,   // fallback fontconfig pattern for icons (Nerd Font)
+	icon_size:             int,      // pixels
+	theme:                 Bar_Theme,
+	start:                 []string, // widget ids, left group
+	center:                []string,
+	end:                   []string,
+	commands:              map[string]string, // widget id -> shell command on click
+	launcher_icon:         string,   // image path (svg/png) or "" for a glyph
+	date_format:           string,   // strftime subset: %a %d %b %m %Y %H %M
+	clock_format:          string,
+	locale:                string,   // "pt-BR" | "en"
+	media_idle_text:       string,
+	title_max_width:       int,
+	show_empty_workspaces: bool,
+	spacing:               int,      // gap between widgets
+	spacer_width:          int,      // width of an explicit "spacer" widget
+	style:                 string,   // full (edge to edge) | floating (margins, rounded corners)
+	margin:                int,      // floating: gap to the screen edges, pixels
+	radius:                int,      // floating: corner radius, pixels
+}
+
+BAR_STYLES :: []string{"full", "floating"}
+THEME_VARIANTS :: []string{"light", "dark"}
+
+// Colour theme of the whole suite (bar, panels, toast, borders, terminal).
+Appearance_Options :: struct {
+	theme:           string, // a THEME_PRESETS name
+	variant:         string, // light | dark
+	animation_scale: f64,    // multiplies every UI/window animation duration: 0 = off, 0.5 = twice as fast, 1 = normal
+}
+
+// Duration of an animation of `seconds` at the configured speed (0 = no animation).
+anim_duration :: proc(cfg: ^Config, seconds: f64) -> f64 {
+	if cfg == nil { return seconds }
+	return seconds * clamp(cfg.appearance.animation_scale, 0, 3)
+}
+
+// Notification daemon (org.freedesktop.Notifications) and its side panel.
+Notification_Options :: struct {
+	enabled:         bool,
+	timeout:         f64,    // seconds a popup stays when the sender does not say (expire_timeout -1)
+	max_history:     int,    // notifications kept in the panel
+	do_not_disturb:  bool,   // no popups; history still collected
+	position:        string, // popups: top-right | bottom-right
+}
+
+// Clipboard history (text and images) and its panel.
+Clipboard_Options :: struct {
+	enabled:         bool,
+	max_items:       int,
+	max_image_bytes: int,  // larger images are not kept
+	persist:         bool, // keep the history in <runtime>/Clipboard across restarts
+}
+
+NOTIFICATION_POSITIONS :: []string{"top-right", "bottom-right"}
+
+// Keyboard (applied with setxkbmap when milk starts; "" keeps the X server's setting).
+Keyboard_Options :: struct {
+	layout:  string, // xkb layouts, comma separated: "br", "us,br"
+	variant: string, // xkb variants: "abnt2", "intl", ...
+	model:   string, // "pc105"
+	options: string, // xkb options: "grp:alt_shift_toggle,caps:escape"
+}
+
+// A theme preset: every colour milk draws with.
+Theme_Colors :: struct {
+	bar:          Bar_Theme, // hex strings, the same fields as bar.theme
+	border_color: string,    // wm.borderColor
+	focus_color:  string,    // wm.focusColor
+}
+
+Theme_Preset :: struct {
+	name:  string, // id used in appearance.theme
+	title: string, // shown by the setup wizard
+	light: Theme_Colors,
+	dark:  Theme_Colors,
+}
+
+// Built-in themes, each with a light and a dark variant. "milk" is the
+// Noctalia-like cream/espresso look.
+@(rodata) THEME_PRESETS := []Theme_Preset{
+	{name = "milk", title = "Milk",
+	 light = {bar = {background = "#F5EEE6", foreground = "#3C3A38", muted = "#A89E94", accent = "#4A3F35",
+	                 accent_foreground = "#F5EEE6", surface = "#E9E0D6", warning = "#B5473A"},
+	          border_color = "#D8CEC3", focus_color = "#4A3F35"},
+	 dark  = {bar = {background = "#211D1A", foreground = "#EDE3D8", muted = "#8C8279", accent = "#D9C3A5",
+	                 accent_foreground = "#211D1A", surface = "#2E2925", warning = "#E07A6A"},
+	          border_color = "#3A342F", focus_color = "#D9C3A5"}},
+	{name = "matcha", title = "Matcha",
+	 light = {bar = {background = "#EEF2E6", foreground = "#2F3A2B", muted = "#8F9A86", accent = "#4E6B3A",
+	                 accent_foreground = "#EEF2E6", surface = "#DDE5D1", warning = "#B5473A"},
+	          border_color = "#CBD5BE", focus_color = "#4E6B3A"},
+	 dark  = {bar = {background = "#1B211A", foreground = "#E1E9D8", muted = "#7F8B76", accent = "#A7C58A",
+	                 accent_foreground = "#1B211A", surface = "#263025", warning = "#E07A6A"},
+	          border_color = "#303A2E", focus_color = "#A7C58A"}},
+	{name = "blueberry", title = "Blueberry",
+	 light = {bar = {background = "#ECEEF6", foreground = "#2B3040", muted = "#8A90A6", accent = "#3F4F86",
+	                 accent_foreground = "#ECEEF6", surface = "#DCE0EE", warning = "#B5473A"},
+	          border_color = "#C9CEE0", focus_color = "#3F4F86"},
+	 dark  = {bar = {background = "#191B24", foreground = "#E0E4F2", muted = "#7D839C", accent = "#9FB0F0",
+	                 accent_foreground = "#191B24", surface = "#242735", warning = "#E07A6A"},
+	          border_color = "#2F3345", focus_color = "#9FB0F0"}},
+}
+
+// The preset colours for a theme name and variant (falls back to milk light).
+theme_preset :: proc(name, variant: string) -> Theme_Colors {
+	for p in THEME_PRESETS {
+		if p.name == name { return variant == "dark" ? p.dark : p.light }
+	}
+	return THEME_PRESETS[0].light
+}
+
+WM_MOD_KEYS :: []string{"super", "alt"}
+
+// A dwm-style rule: windows whose WM_CLASS / title match get these tags, floating state and monitor.
+WM_Rule :: struct {
+	class:    string, // WM_CLASS class, exact match ("" = any)
+	instance: string, // WM_CLASS instance, exact match ("" = any)
+	title:    string, // substring of the window title ("" = any)
+	tags:     uint,   // tag bitmask; 0 = the current tags
+	floating: bool,
+	monitor:  int,    // -1 = the current monitor
+	pip:      bool,   // treat as a picture-in-picture window (see wm)
+}
+
+// The built-in dwm-inspired window manager.
+WM_Options :: struct {
+	enabled:             bool,
+	mod_key:             string,            // super | alt
+	terminal:            string,            // Mod+Shift+Return
+	launcher:            string,            // Mod+p
+	border_width:        int,
+	border_color:        string,            // unfocused border (hex)
+	focus_color:         string,            // focused border (hex)
+	gaps:                int,               // pixels between tiled windows and the screen edge
+	master_factor:       f64,               // 0.05 .. 0.95
+	master_count:        int,
+	resize_hints:        bool,              // honour size hints in tiled layouts (dwm's resizehints)
+	focus_follows_mouse: bool,
+	tag_count:           int,               // 1 .. 32
+	animation:           int,               // milliseconds for window open/move/resize animations; 0 = off
+	screenshot:          string,            // Mod+Shift+s command; "" = contrib/milk-screenshot
+	file_manager:        string,            // Mod+e command; "" = Spoil next to milk (../spoil/spoil), else xdg-open ~
+	corner_radius:       int,               // rounded window corners in pixels; 0 = square
+	rules:               []WM_Rule,
+	bindings:            map[string]string, // "super+shift+f" -> command to spawn
+}
+
+Config :: struct {
+	version:    int,
+	paths:      Paths,
+	workspaces: map[int]Workspace,
+	linux:      Linux_Options,
+	bar:        Bar_Options,
+	wm:         WM_Options,
+	appearance:    Appearance_Options,
+	notifications: Notification_Options,
+	clipboard:     Clipboard_Options,
+	keyboard:      Keyboard_Options,
+	allocator:  runtime_allocator,
+}
+
+runtime_allocator :: struct { _: int } // placeholder so Config stays a plain struct
+
+workspace :: proc(cfg: ^Config, index: int) -> (Workspace, bool) {
+	ws, ok := cfg.workspaces[index]
+	return ws, ok
+}
+
+default_indicator :: proc() -> Indicator_Options {
+	return {enabled = true, duration = 2.4, font = "sans:bold", font_size = 11, position = "bottom"}
+}
+
+default_shortcuts :: proc() -> Shortcut_Options {
+	return {mode = "layer", icon_size = 48, single_click = false, font = "sans", font_size = 9,
+	        icon_theme = "", margins = {8, 8, 8, 8}, monitor = "primary"}
+}
+
+// Defaults reproduce the Noctalia bar of the reference system (light theme).
+// The strings and slices returned here are literals: they are only used as
+// default values by the loader, which clones everything it stores.
+default_bar :: proc() -> Bar_Options {
+	b: Bar_Options
+	b.enabled = true
+	b.height = 40
+	b.position = "top"
+	b.monitor = "primary"
+	b.override_redirect = "auto"
+	b.opacity = 0.9
+	b.font = "sans"
+	b.font_size = 14
+	b.icon_font_file = "/usr/share/noctalia/assets/fonts/noctalia-tabler.ttf"
+	b.icon_font = "Symbols Nerd Font,MesloLGS Nerd Font,monospace"
+	b.icon_size = 19
+	b.theme = {background = "#F5EEE6", foreground = "#3C3A38", muted = "#A89E94", accent = "#4A3F35",
+	           accent_foreground = "#F5EEE6", surface = "#E9E0D6", warning = "#B5473A"}
+	b.start = DEFAULT_BAR_START
+	b.center = DEFAULT_BAR_CENTER
+	b.end = DEFAULT_BAR_END
+	b.launcher_icon = "" // "" = milk's own logo; or an image path
+	b.date_format = "%a %d %b"
+	b.clock_format = "%H:%M"
+	b.locale = "pt-BR"
+	b.media_idle_text = "Nada Reproduzindo"
+	b.title_max_width = 320
+	b.show_empty_workspaces = true
+	b.spacing = 14
+	b.spacer_width = 10
+	b.style = "full"
+	b.margin = 8
+	b.radius = 14
+	return b
+}
+
+// Defaults follow dwm's config.def.h, with Super as the modifier. Strings and
+// slices are literals: the loader clones what it stores.
+default_wm :: proc() -> WM_Options {
+	return {
+		enabled = true, mod_key = "super", terminal = "alacritty", launcher = `rofi -show drun -theme "$MILK_ROFI_THEME"`,
+		border_width = 2, border_color = "#444444", focus_color = "#4A3F35", gaps = 0,
+		master_factor = 0.55, master_count = 1, resize_hints = true, focus_follows_mouse = true,
+		tag_count = 9, animation = 180, screenshot = "", corner_radius = 10,
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Loading
+// ---------------------------------------------------------------------------
+Loader :: struct {
+	err:  string,
+	path: string,
+}
+
+@(private)
+fail :: proc(l: ^Loader, format: string, args: ..any) -> bool {
+	if l.err == "" { l.err = fmt.aprintf(format, ..args) }
+	return false
+}
+
+@(private)
+is_unsafe_relative :: proc(value: string) -> bool {
+	if strings.trim_space(value) == "" { return true }
+	if strings.has_prefix(value, "/") || strings.has_prefix(value, "\\") { return true }
+	for part in strings.split(value, "/", context.temp_allocator) {
+		for sub in strings.split(part, "\\", context.temp_allocator) {
+			if sub == "." || sub == ".." { return true }
+		}
+	}
+	return false
+}
+
+@(private)
+relative_path :: proc(l: ^Loader, v: json.Value, field: string) -> (string, bool) {
+	s, ok := v.(string)
+	if !ok { return "", fail(l, "%s must be a string.", field) }
+	if is_unsafe_relative(s) { return "", fail(l, "Invalid relative path in milk.json: %s", field) }
+	return strings.clone(s), true
+}
+
+@(private)
+get_string :: proc(l: ^Loader, obj: json.Object, key, scope: string, default_value: string, allow_null := false) -> (string, bool) {
+	v, present := obj[key]
+	if !present { return strings.clone(default_value), true }
+	if _, is_null := v.(json.Null); is_null && allow_null { return "", true }
+	s, ok := v.(string)
+	if !ok || strings.trim_space(s) == "" { return "", fail(l, "%s.%s must be a non-empty string.", scope, key) }
+	return strings.clone(s), true
+}
+
+@(private)
+get_choice :: proc(l: ^Loader, obj: json.Object, key, scope: string, default_value: string, choices: []string) -> (string, bool) {
+	s, ok := get_string(l, obj, key, scope, default_value)
+	if !ok { return "", false }
+	for c in choices { if c == s { return s, true } }
+	delete(s)
+	return "", fail(l, "%s.%s must be one of: %s", scope, key, strings.join(choices, ", ", context.temp_allocator))
+}
+
+@(private)
+get_bool :: proc(l: ^Loader, obj: json.Object, key, scope: string, default_value: bool) -> (bool, bool) {
+	v, present := obj[key]
+	if !present { return default_value, true }
+	b, ok := v.(bool)
+	if !ok { return false, fail(l, "%s.%s must be true or false.", scope, key) }
+	return b, true
+}
+
+@(private)
+get_number :: proc(l: ^Loader, obj: json.Object, key, scope: string, default_value: f64, minimum: f64, maximum: f64 = 1e18) -> (f64, bool) {
+	v, present := obj[key]
+	if !present { return default_value, true }
+	n: f64
+	#partial switch x in v {
+	case i64: n = f64(x)
+	case f64: n = x
+	case: return 0, fail(l, "%s.%s must be a number.", scope, key)
+	}
+	if n < minimum { return 0, fail(l, "%s.%s must be at least %v.", scope, key, minimum) }
+	if n > maximum { return 0, fail(l, "%s.%s must be at most %v.", scope, key, maximum) }
+	return n, true
+}
+
+@(private)
+get_object :: proc(l: ^Loader, obj: json.Object, key, scope: string) -> (json.Object, bool) {
+	v, present := obj[key]
+	if !present { return nil, true }
+	o, ok := v.(json.Object)
+	if !ok { return nil, fail(l, "%s.%s must be an object.", scope, key) }
+	return o, true
+}
+
+@(private)
+reject_unknown :: proc(l: ^Loader, obj: json.Object, allowed: []string, scope: string) -> bool {
+	for key, _ in obj {
+		known := false
+		for a in allowed { if a == key { known = true; break } }
+		if !known { return fail(l, "Unknown key in %s: %s", scope, key) }
+	}
+	return true
+}
+
+@(private)
+get_string_list :: proc(l: ^Loader, obj: json.Object, key, scope: string, default_value: []string, choices: []string = nil) -> ([]string, bool) {
+	v, present := obj[key]
+	if !present {
+		out := make([]string, len(default_value))
+		for s, i in default_value { out[i] = strings.clone(s) }
+		return out, true
+	}
+	arr, ok := v.(json.Array)
+	if !ok { return nil, fail(l, "%s.%s must be an array of strings.", scope, key) }
+	out := make([dynamic]string)
+	for item in arr {
+		s, is_str := item.(string)
+		if !is_str { return nil, fail(l, "%s.%s must contain only strings.", scope, key) }
+		if choices != nil {
+			found := false
+			for c in choices { if c == s { found = true; break } }
+			if !found { return nil, fail(l, "%s.%s: unknown widget %q (valid: %s)", scope, key, s, strings.join(choices, ", ", context.temp_allocator)) }
+		}
+		append(&out, strings.clone(s))
+	}
+	return out[:], true
+}
+
+@(private)
+parse_linux :: proc(l: ^Loader, root: json.Object, out: ^Linux_Options) -> bool {
+	// A missing section behaves like {}: indexing a nil json.Object yields "absent",
+	// so every field below receives a freshly cloned default and destroy() can free it.
+	ind_defaults := default_indicator()
+	sc_defaults := default_shortcuts()
+	section, ok := get_object(l, root, "linux", "milk.json")
+	if !ok { return false }
+	reject_unknown(l, section, {"wallpaperMode", "indicator", "shortcuts"}, "linux") or_return
+	out.wallpaper_mode = get_choice(l, section, "wallpaperMode", "linux", "fill", WALLPAPER_MODES) or_return
+
+	ind := get_object(l, section, "indicator", "linux") or_return
+	{
+		reject_unknown(l, ind, {"enabled", "duration", "font", "fontSize", "position"}, "linux.indicator") or_return
+		out.indicator.enabled = get_bool(l, ind, "enabled", "linux.indicator", ind_defaults.enabled) or_return
+		out.indicator.duration = get_number(l, ind, "duration", "linux.indicator", ind_defaults.duration, 0.1) or_return
+		out.indicator.font = get_string(l, ind, "font", "linux.indicator", ind_defaults.font) or_return
+		out.indicator.font_size = get_number(l, ind, "fontSize", "linux.indicator", ind_defaults.font_size, 4) or_return
+		out.indicator.position = get_choice(l, ind, "position", "linux.indicator", ind_defaults.position, INDICATOR_POSITIONS) or_return
+	}
+
+	sc := get_object(l, section, "shortcuts", "linux") or_return
+	{
+		reject_unknown(l, sc, {"mode", "iconSize", "singleClick", "font", "fontSize", "iconTheme", "margins", "monitor"}, "linux.shortcuts") or_return
+		out.shortcuts.mode = get_choice(l, sc, "mode", "linux.shortcuts", sc_defaults.mode, SHORTCUT_MODES) or_return
+		size := get_number(l, sc, "iconSize", "linux.shortcuts", f64(sc_defaults.icon_size), 16, 256) or_return
+		out.shortcuts.icon_size = int(size)
+		out.shortcuts.single_click = get_bool(l, sc, "singleClick", "linux.shortcuts", sc_defaults.single_click) or_return
+		out.shortcuts.font = get_string(l, sc, "font", "linux.shortcuts", sc_defaults.font) or_return
+		out.shortcuts.font_size = get_number(l, sc, "fontSize", "linux.shortcuts", sc_defaults.font_size, 4) or_return
+		out.shortcuts.icon_theme = get_string(l, sc, "iconTheme", "linux.shortcuts", "", true) or_return
+		out.shortcuts.monitor = get_string(l, sc, "monitor", "linux.shortcuts", sc_defaults.monitor) or_return
+		out.shortcuts.margins = sc_defaults.margins
+		if mv, present := sc["margins"]; present {
+			arr, is_arr := mv.(json.Array)
+			if !is_arr || len(arr) != 4 { return fail(l, "linux.shortcuts.margins must be four non-negative integers: [top, right, bottom, left]") }
+			for item, i in arr {
+				n, is_int := item.(i64)
+				if !is_int || n < 0 { return fail(l, "linux.shortcuts.margins must be four non-negative integers: [top, right, bottom, left]") }
+				out.shortcuts.margins[i] = int(n)
+			}
+		}
+	}
+	return true
+}
+
+@(private)
+parse_bar :: proc(l: ^Loader, root: json.Object, out: ^Bar_Options) -> bool {
+	d := default_bar()
+	out.commands = make(map[string]string)
+	section, ok := get_object(l, root, "bar", "milk.json")
+	if !ok { return false }
+	reject_unknown(l, section, {"enabled", "height", "position", "monitor", "overrideRedirect", "opacity", "font", "fontSize",
+	                            "iconFontFile", "iconFont", "iconSize", "theme", "start", "center", "end", "commands",
+	                            "launcherIcon", "dateFormat", "clockFormat", "locale", "mediaIdleText", "titleMaxWidth",
+	                            "showEmptyWorkspaces", "spacing", "spacerWidth", "style", "margin", "radius"}, "bar") or_return
+	out.enabled = get_bool(l, section, "enabled", "bar", d.enabled) or_return
+	h := get_number(l, section, "height", "bar", f64(d.height), 16, 200) or_return
+	out.height = int(h)
+	out.position = get_choice(l, section, "position", "bar", d.position, BAR_POSITIONS) or_return
+	out.monitor = get_string(l, section, "monitor", "bar", d.monitor) or_return
+	out.override_redirect = get_choice(l, section, "overrideRedirect", "bar", d.override_redirect, OVERRIDE_MODES) or_return
+	out.opacity = get_number(l, section, "opacity", "bar", d.opacity, 0, 1) or_return
+	out.font = get_string(l, section, "font", "bar", d.font) or_return
+	fs := get_number(l, section, "fontSize", "bar", f64(d.font_size), 6, 64) or_return
+	out.font_size = int(fs)
+	out.icon_font_file = get_string(l, section, "iconFontFile", "bar", d.icon_font_file, true) or_return
+	out.icon_font = get_string(l, section, "iconFont", "bar", d.icon_font) or_return
+	is := get_number(l, section, "iconSize", "bar", f64(d.icon_size), 6, 64) or_return
+	out.icon_size = int(is)
+	theme := get_object(l, section, "theme", "bar") or_return
+	reject_unknown(l, theme, {"background", "foreground", "muted", "accent", "accentForeground", "surface", "warning"}, "bar.theme") or_return
+	out.theme.background = get_string(l, theme, "background", "bar.theme", d.theme.background) or_return
+	out.theme.foreground = get_string(l, theme, "foreground", "bar.theme", d.theme.foreground) or_return
+	out.theme.muted = get_string(l, theme, "muted", "bar.theme", d.theme.muted) or_return
+	out.theme.accent = get_string(l, theme, "accent", "bar.theme", d.theme.accent) or_return
+	out.theme.accent_foreground = get_string(l, theme, "accentForeground", "bar.theme", d.theme.accent_foreground) or_return
+	out.theme.surface = get_string(l, theme, "surface", "bar.theme", d.theme.surface) or_return
+	out.theme.warning = get_string(l, theme, "warning", "bar.theme", d.theme.warning) or_return
+	out.start = get_string_list(l, section, "start", "bar", d.start, BAR_WIDGETS) or_return
+	out.center = get_string_list(l, section, "center", "bar", d.center, BAR_WIDGETS) or_return
+	out.end = get_string_list(l, section, "end", "bar", d.end, BAR_WIDGETS) or_return
+	commands := get_object(l, section, "commands", "bar") or_return
+	for key, value in commands {
+		s, is_str := value.(string)
+		if !is_str { return fail(l, "bar.commands.%s must be a string.", key) }
+		out.commands[strings.clone(key)] = strings.clone(s)
+	}
+	out.launcher_icon = get_string(l, section, "launcherIcon", "bar", d.launcher_icon, true) or_return
+	out.date_format = get_string(l, section, "dateFormat", "bar", d.date_format) or_return
+	out.clock_format = get_string(l, section, "clockFormat", "bar", d.clock_format) or_return
+	out.locale = get_string(l, section, "locale", "bar", d.locale) or_return
+	out.media_idle_text = get_string(l, section, "mediaIdleText", "bar", d.media_idle_text) or_return
+	tw := get_number(l, section, "titleMaxWidth", "bar", f64(d.title_max_width), 40) or_return
+	out.title_max_width = int(tw)
+	out.show_empty_workspaces = get_bool(l, section, "showEmptyWorkspaces", "bar", d.show_empty_workspaces) or_return
+	sp := get_number(l, section, "spacing", "bar", f64(d.spacing), 0) or_return
+	out.spacing = int(sp)
+	sw := get_number(l, section, "spacerWidth", "bar", f64(d.spacer_width), 0) or_return
+	out.spacer_width = int(sw)
+	out.style = get_choice(l, section, "style", "bar", d.style, BAR_STYLES) or_return
+	mg := get_number(l, section, "margin", "bar", f64(d.margin), 0, 100) or_return
+	out.margin = int(mg)
+	rd := get_number(l, section, "radius", "bar", f64(d.radius), 0, 100) or_return
+	out.radius = int(rd)
+	return true
+}
+
+@(private)
+parse_wm :: proc(l: ^Loader, root: json.Object, out: ^WM_Options) -> bool {
+	d := default_wm()
+	out.bindings = make(map[string]string)
+	section, ok := get_object(l, root, "wm", "milk.json")
+	if !ok { return false }
+	reject_unknown(l, section, {"enabled", "modKey", "terminal", "launcher", "borderWidth", "borderColor", "focusColor",
+	                            "gaps", "masterFactor", "masterCount", "resizeHints", "focusFollowsMouse", "tagCount",
+	                            "animation", "screenshot", "fileManager", "cornerRadius", "rules", "bindings"}, "wm") or_return
+	out.enabled = get_bool(l, section, "enabled", "wm", d.enabled) or_return
+	out.mod_key = get_choice(l, section, "modKey", "wm", d.mod_key, WM_MOD_KEYS) or_return
+	out.terminal = get_string(l, section, "terminal", "wm", d.terminal) or_return
+	out.launcher = get_string(l, section, "launcher", "wm", d.launcher) or_return
+	bw := get_number(l, section, "borderWidth", "wm", f64(d.border_width), 0, 20) or_return
+	out.border_width = int(bw)
+	out.border_color = get_string(l, section, "borderColor", "wm", d.border_color) or_return
+	out.focus_color = get_string(l, section, "focusColor", "wm", d.focus_color) or_return
+	gaps := get_number(l, section, "gaps", "wm", f64(d.gaps), 0, 200) or_return
+	out.gaps = int(gaps)
+	out.master_factor = get_number(l, section, "masterFactor", "wm", d.master_factor, 0.05, 0.95) or_return
+	mc := get_number(l, section, "masterCount", "wm", f64(d.master_count), 0, 32) or_return
+	out.master_count = int(mc)
+	out.resize_hints = get_bool(l, section, "resizeHints", "wm", d.resize_hints) or_return
+	out.focus_follows_mouse = get_bool(l, section, "focusFollowsMouse", "wm", d.focus_follows_mouse) or_return
+	tc := get_number(l, section, "tagCount", "wm", f64(d.tag_count), 1, 32) or_return
+	out.tag_count = int(tc)
+	anim := get_number(l, section, "animation", "wm", f64(d.animation), 0, 2000) or_return
+	out.animation = int(anim)
+	out.file_manager = get_string(l, section, "fileManager", "wm", "", true) or_return
+	cr := get_number(l, section, "cornerRadius", "wm", f64(d.corner_radius), 0, 64) or_return
+	out.corner_radius = int(cr)
+	// "" or null = the bundled helper (contrib/*-screenshot).
+	out.screenshot = strings.clone("")
+	if sv, present := section["screenshot"]; present {
+		#partial switch v in sv {
+		case json.Null:
+		case string:
+			delete(out.screenshot)
+			out.screenshot = strings.clone(v)
+		case:
+			return fail(l, "wm.screenshot must be a string or null.")
+		}
+	}
+
+	rules := make([dynamic]WM_Rule)
+	if rv, present := section["rules"]; present {
+		arr, is_arr := rv.(json.Array)
+		if !is_arr { return fail(l, "wm.rules must be an array of objects.") }
+		for item, i in arr {
+			obj, is_obj := item.(json.Object)
+			scope := fmt.tprintf("wm.rules[%d]", i)
+			if !is_obj { return fail(l, "%s must be an object.", scope) }
+			reject_unknown(l, obj, {"class", "instance", "title", "tags", "floating", "monitor", "pip"}, scope) or_return
+			rule: WM_Rule
+			rule.class = get_string(l, obj, "class", scope, "", true) or_return
+			rule.instance = get_string(l, obj, "instance", scope, "", true) or_return
+			rule.title = get_string(l, obj, "title", scope, "", true) or_return
+			tags := get_number(l, obj, "tags", scope, 0, 0) or_return
+			rule.tags = uint(tags)
+			rule.floating = get_bool(l, obj, "floating", scope, false) or_return
+			rule.pip = get_bool(l, obj, "pip", scope, false) or_return
+			mon := get_number(l, obj, "monitor", scope, -1, -1) or_return
+			rule.monitor = int(mon)
+			append(&rules, rule)
+		}
+	}
+	out.rules = rules[:]
+
+	bindings := get_object(l, section, "bindings", "wm") or_return
+	for key, value in bindings {
+		cmd, is_str := value.(string)
+		if !is_str { return fail(l, "wm.bindings.%s must be a string.", key) }
+		out.bindings[strings.clone(key)] = strings.clone(cmd)
+	}
+	return true
+}
+
+@(private)
+parse_extras :: proc(l: ^Loader, root: json.Object, cfg: ^Config) -> bool {
+	ap := get_object(l, root, "appearance", "milk.json") or_return
+	reject_unknown(l, ap, {"theme", "variant", "animationScale"}, "appearance") or_return
+	names := make([dynamic]string, context.temp_allocator)
+	for p in THEME_PRESETS { append(&names, p.name) }
+	cfg.appearance.theme = get_choice(l, ap, "theme", "appearance", "milk", names[:]) or_return
+	cfg.appearance.variant = get_choice(l, ap, "variant", "appearance", "light", THEME_VARIANTS) or_return
+	cfg.appearance.animation_scale = get_number(l, ap, "animationScale", "appearance", 0.7, 0, 3) or_return
+
+	no := get_object(l, root, "notifications", "milk.json") or_return
+	reject_unknown(l, no, {"enabled", "timeout", "maxHistory", "doNotDisturb", "position"}, "notifications") or_return
+	cfg.notifications.enabled = get_bool(l, no, "enabled", "notifications", true) or_return
+	cfg.notifications.timeout = get_number(l, no, "timeout", "notifications", 5, 1, 3600) or_return
+	mh := get_number(l, no, "maxHistory", "notifications", 100, 1, 1000) or_return
+	cfg.notifications.max_history = int(mh)
+	cfg.notifications.do_not_disturb = get_bool(l, no, "doNotDisturb", "notifications", false) or_return
+	cfg.notifications.position = get_choice(l, no, "position", "notifications", "top-right", NOTIFICATION_POSITIONS) or_return
+
+	cb := get_object(l, root, "clipboard", "milk.json") or_return
+	reject_unknown(l, cb, {"enabled", "maxItems", "maxImageBytes", "persist"}, "clipboard") or_return
+	cfg.clipboard.enabled = get_bool(l, cb, "enabled", "clipboard", true) or_return
+	mi := get_number(l, cb, "maxItems", "clipboard", 50, 1, 500) or_return
+	cfg.clipboard.max_items = int(mi)
+	mb := get_number(l, cb, "maxImageBytes", "clipboard", 16 * 1024 * 1024, 0, 256 * 1024 * 1024) or_return
+	cfg.clipboard.max_image_bytes = int(mb)
+	cfg.clipboard.persist = get_bool(l, cb, "persist", "clipboard", true) or_return
+
+	kb := get_object(l, root, "keyboard", "milk.json") or_return
+	reject_unknown(l, kb, {"layout", "variant", "model", "options"}, "keyboard") or_return
+	cfg.keyboard.layout = get_string(l, kb, "layout", "keyboard", "", true) or_return
+	cfg.keyboard.variant = get_string(l, kb, "variant", "keyboard", "", true) or_return
+	cfg.keyboard.model = get_string(l, kb, "model", "keyboard", "", true) or_return
+	cfg.keyboard.options = get_string(l, kb, "options", "keyboard", "", true) or_return
+	return true
+}
+
+// Load and validate milk.json. `err` is "" on success.
+load :: proc(path: string) -> (cfg: ^Config, err: string) {
+	l := Loader{path = path}
+	data, read_err := os.read_entire_file(path, context.temp_allocator)
+	if read_err != nil {
+		return nil, fmt.aprintf("Configuration file not found: %s", path)
+	}
+	value, perr := json.parse(data, .JSON5, true, context.temp_allocator)
+	if perr != .None {
+		return nil, fmt.aprintf("Could not read milk.json: %v", perr)
+	}
+	root, is_obj := value.(json.Object)
+	if !is_obj { return nil, strings.clone("milk.json must contain a JSON object.") }
+
+	cfg = new(Config)
+	ok := parse_root(&l, root, cfg)
+	if !ok {
+		destroy(cfg)
+		return nil, l.err
+	}
+	return cfg, ""
+}
+
+@(private)
+parse_root :: proc(l: ^Loader, root: json.Object, cfg: ^Config) -> bool {
+	version, has_version := root["version"]
+	v, is_int := version.(i64)
+	if !has_version || !is_int || v != 1 { return fail(l, "Unsupported milk.json version. Expected version 1.") }
+	cfg.version = 1
+
+	paths, has_paths := root["paths"]
+	pobj, pok := paths.(json.Object)
+	if !has_paths || !pok { return fail(l, "Missing paths in milk.json.") }
+	seen := make(map[string]bool, context.temp_allocator)
+	values: [3]string
+	for key, i in ([]string{"common", "wallpapers", "wallpaperCache"}) {
+		raw, present := pobj[key]
+		if !present { return fail(l, "Missing paths.%s in milk.json.", key) }
+		value := relative_path(l, raw, fmt.tprintf("paths.%s", key)) or_return
+		if seen[value] { return fail(l, "Runtime paths must be unique: %s", value) }
+		seen[value] = true
+		values[i] = value
+	}
+	cfg.paths = {common = values[0], wallpapers = values[1], wallpaper_cache = values[2]}
+
+	wsraw, has_ws := root["workspaces"]
+	wsobj, wok := wsraw.(json.Object)
+	if !has_ws || !wok || len(wsobj) == 0 { return fail(l, "milk.json must define at least one workspace.") }
+	cfg.workspaces = make(map[int]Workspace)
+	folders := make(map[string]bool, context.temp_allocator)
+	for key, entry in wsobj {
+		index, parsed := strconv.parse_int(key, 10)
+		if !parsed || index <= 0 || key[0] == '0' || key[0] == '+' || key[0] == '-' {
+			return fail(l, "Invalid workspace id '%s' in milk.json. Use positive numbers.", key)
+		}
+		eobj, eok := entry.(json.Object)
+		if !eok { return fail(l, "Workspace %s must define name, folder, and wallpaper.", key) }
+		fraw, has_folder := eobj["folder"]
+		nraw, has_name := eobj["name"]
+		wraw, has_wp := eobj["wallpaper"]
+		if !has_folder || !has_name || !has_wp { return fail(l, "Workspace %s must define name, folder, and wallpaper.", key) }
+		if _, fstr := fraw.(string); !fstr { return fail(l, "Workspace %s folder must be a string.", key) }
+		folder := relative_path(l, fraw, fmt.tprintf("workspaces.%s.folder", key)) or_return
+		if seen[folder] { return fail(l, "Workspace folder conflicts with a shared runtime path: %s", folder) }
+		if folders[folder] { return fail(l, "Workspace folders must be unique: %s", folder) }
+		folders[folder] = true
+
+		name := ""
+		if _, is_null := nraw.(json.Null); !is_null {
+			s, is_str := nraw.(string)
+			if !is_str { return fail(l, "Workspace %s name must be a string or null.", key) }
+			name = strings.clone(s)
+		}
+		wallpaper := ""
+		if _, is_null := wraw.(json.Null); !is_null {
+			s, is_str := wraw.(string)
+			if !is_str { return fail(l, "Workspace %s wallpaper must be a string or null.", key) }
+			if strings.trim_space(s) != "" {
+				wallpaper = relative_path(l, wraw, fmt.tprintf("workspaces.%s.wallpaper", key)) or_return
+			}
+		}
+		cfg.workspaces[index] = Workspace{index = index, name = name, folder = folder, wallpaper = wallpaper}
+	}
+
+	parse_linux(l, root, &cfg.linux) or_return
+	parse_bar(l, root, &cfg.bar) or_return
+	parse_wm(l, root, &cfg.wm) or_return
+	parse_extras(l, root, cfg) or_return
+	return true
+}
+
+destroy :: proc(cfg: ^Config) {
+	if cfg == nil { return }
+	delete(cfg.paths.common); delete(cfg.paths.wallpapers); delete(cfg.paths.wallpaper_cache)
+	for _, ws in cfg.workspaces { delete(ws.name); delete(ws.folder); delete(ws.wallpaper) }
+	delete(cfg.workspaces)
+	delete(cfg.linux.wallpaper_mode)
+	delete(cfg.linux.indicator.font); delete(cfg.linux.indicator.position)
+	delete(cfg.linux.shortcuts.mode); delete(cfg.linux.shortcuts.font); delete(cfg.linux.shortcuts.icon_theme); delete(cfg.linux.shortcuts.monitor)
+	b := &cfg.bar
+	delete(b.position); delete(b.monitor); delete(b.override_redirect); delete(b.font); delete(b.icon_font_file); delete(b.icon_font)
+	delete(b.theme.background); delete(b.theme.foreground); delete(b.theme.muted); delete(b.theme.accent)
+	delete(b.theme.accent_foreground); delete(b.theme.surface); delete(b.theme.warning)
+	for s in b.start { delete(s) }; delete(b.start)
+	for s in b.center { delete(s) }; delete(b.center)
+	for s in b.end { delete(s) }; delete(b.end)
+	for k, v in b.commands { delete(k); delete(v) }
+	delete(b.commands)
+	delete(b.launcher_icon); delete(b.date_format); delete(b.clock_format); delete(b.locale); delete(b.media_idle_text)
+	delete(b.style)
+	delete(cfg.appearance.theme); delete(cfg.appearance.variant); delete(cfg.notifications.position)
+	delete(cfg.keyboard.layout); delete(cfg.keyboard.variant); delete(cfg.keyboard.model); delete(cfg.keyboard.options)
+	w := &cfg.wm
+	delete(w.mod_key); delete(w.terminal); delete(w.launcher); delete(w.border_color); delete(w.focus_color); delete(w.screenshot)
+	delete(w.file_manager)
+	for rule in w.rules { delete(rule.class); delete(rule.instance); delete(rule.title) }
+	delete(w.rules)
+	for k, v in w.bindings { delete(k); delete(v) }
+	delete(w.bindings)
+	free(cfg)
+}

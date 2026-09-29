@@ -1,0 +1,29 @@
+#!/bin/sh
+# Region screenshot for milk (Super+Shift+S).
+# Uses the first tool available: flameshot (its own editor), maim, scrot, or
+# ImageMagick's `import` (drag a rectangle; a plain click takes that window).
+# Saved to <Pictures>/Screenshots and copied to the clipboard when xclip exists.
+pictures=$(xdg-user-dir PICTURES 2>/dev/null)
+[ -n "$pictures" ] || pictures="$HOME/Pictures"
+dir="$pictures/Screenshots"
+mkdir -p "$dir"
+file="$dir/Screenshot_$(date +%Y-%m-%d_%H-%M-%S).png"
+
+if command -v flameshot >/dev/null 2>&1; then
+    exec flameshot gui --path "$dir"
+elif command -v maim >/dev/null 2>&1; then
+    maim -s -u "$file" || exit 0
+elif command -v scrot >/dev/null 2>&1; then
+    scrot -s -f "$file" || exit 0
+elif command -v import >/dev/null 2>&1; then
+    import "$file" || exit 0
+else
+    notify-send "milk" "Install flameshot, maim or scrot to take screenshots" 2>/dev/null
+    exit 1
+fi
+
+[ -s "$file" ] || exit 0
+if command -v xclip >/dev/null 2>&1; then
+    xclip -selection clipboard -t image/png -i "$file"
+fi
+notify-send -i "$file" "Screenshot" "$file" 2>/dev/null || true

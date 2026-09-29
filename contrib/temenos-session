@@ -1,0 +1,5 @@
+#!/bin/sh
+# Compatibility shim: login entries installed before the Linux version was
+# renamed to milk point here. Re-run `sudo ./contrib/install-sddm-session.sh`
+# to replace that entry with "milk"; this file can be deleted afterwards.
+exec "$(dirname "$(readlink -f "$0")")/milk-session" "$@"

@@ -1,0 +1,21 @@
+Handle EWMH _NET_CURRENT_DESKTOP client messages in dwm (apply on top of the ewmhtags patch).
+With it, clicking a workspace dot in the milk bar or running 'milk switch N' switches
+dwm's view exactly like pressing Mod+N. Apply with: patch -p1 < dwm-milk-currentdesktop.diff
+
+--- a/dwm.c
++++ b/dwm.c
+@@ -524,6 +524,14 @@
+ 	XClientMessageEvent *cme = &e->xclient;
+ 	Client *c = wintoclient(cme->window);
+ 
++	/* milk: EWMH desktop switch requests (bar clicks, `milk switch N`) */
++	if (cme->message_type == netatom[NetCurrentDesktop]) {
++		if (cme->data.l[0] >= 0 && cme->data.l[0] < LENGTH(tags)) {
++			const Arg a = {.ui = 1 << cme->data.l[0]};
++			view(&a);
++		}
++		return;
++	}
+ 	if (!c)
+ 		return;
+ 	if (cme->message_type == netatom[NetWMState]) {

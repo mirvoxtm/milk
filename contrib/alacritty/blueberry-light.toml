@@ -1,0 +1,72 @@
+# milk colours for Alacritty (Blueberry, light): the frost, slate and indigo
+# palette of the Blueberry theme (bar.theme in milk.json), with ANSI colours
+# tuned to stay readable on the light background. Imported by
+# ~/.config/alacritty/milk.toml, which the window manager passes to Alacritty
+# (wm.terminal), so other sessions keep their own theme. The setup wizard points
+# that import at the chosen theme.
+
+[window]
+padding = { x = 12, y = 10 }
+dynamic_padding = true
+opacity = 1.0
+
+[colors]
+draw_bold_text_with_bright_colors = false
+
+[colors.primary]
+background = "#ECEEF6"   # bar background
+foreground = "#2B3040"   # bar text
+dim_foreground = "#5A6078"
+bright_foreground = "#1A1E2B"
+
+[colors.cursor]
+text = "#ECEEF6"
+cursor = "#3F4F86"       # bar accent
+
+[colors.vi_mode_cursor]
+text = "#ECEEF6"
+cursor = "#5E6FA8"
+
+[colors.selection]
+text = "CellForeground"
+background = "#D2D7EA"   # a shade of the bar surface
+
+[colors.search.matches]
+foreground = "#ECEEF6"
+background = "#5E6FA8"
+
+[colors.search.focused_match]
+foreground = "#ECEEF6"
+background = "#3F4F86"
+
+[colors.footer_bar]
+foreground = "#ECEEF6"
+background = "#3F4F86"
+
+[colors.hints.start]
+foreground = "#ECEEF6"
+background = "#B5473A"
+
+[colors.hints.end]
+foreground = "#3F4F86"
+background = "#DCE0EE"
+
+[colors.normal]
+black   = "#2B3040"
+red     = "#B5473A"   # bar warning colour
+green   = "#4F7A3A"
+yellow  = "#946C14"
+blue    = "#3F5FA0"
+magenta = "#7E4F96"
+cyan    = "#2F7482"
+white   = "#8A90A6"   # bar muted colour
+
+[colors.bright]
+black   = "#5A6078"
+red     = "#C4584A"
+green   = "#5F8C48"
+yellow  = "#A87E22"
+blue    = "#5070B2"
+magenta = "#9061A8"
+cyan    = "#3E8694"
+white   = "#C9CEE0"

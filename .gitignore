@@ -1,0 +1,18 @@
+# Build output
+bin/
+
+# milk runtime (created next to the clone when it lives in Documents/milk)
+runtime/
+*.pid
+*.log
+WallpaperCache/
+Common/
+Area*/
+Wallpapers/
+
+# Temporary / backup files
+*.tmp
+*.bak
+
+# Editor / IDE
+.vscode/

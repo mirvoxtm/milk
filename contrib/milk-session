@@ -1,0 +1,14 @@
+#!/bin/sh
+# milk X session, started by the display manager (SDDM, LightDM, GDM) through
+# its Xsession wrapper with DISPLAY and XAUTHORITY already set. milk acts as the
+# window manager here, so the session lasts as long as it runs (Mod+Shift+q logs out).
+# Its output lands in the display manager's session log (~/.local/share/sddm/xorg-session.log).
+dir=$(dirname "$(dirname "$(readlink -f "$0")")")
+
+# Remember where milk lives, so /usr/local/bin/milk-session finds it quickly.
+mkdir -p "${XDG_CONFIG_HOME:-$HOME/.config}/milk"
+printf '%s\n' "$dir" > "${XDG_CONFIG_HOME:-$HOME/.config}/milk/location"
+
+[ -f "$HOME/.Xresources" ] && command -v xrdb >/dev/null 2>&1 && xrdb -merge "$HOME/.Xresources"
+
+exec "$dir/milk" start --foreground

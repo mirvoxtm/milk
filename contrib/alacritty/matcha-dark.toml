@@ -1,0 +1,72 @@
+# milk colours for Alacritty (Matcha, dark): the forest, moss and soft-leaf
+# palette of the Matcha theme in its dark variant (bar.theme in milk.json), with
+# ANSI colours tuned to stay readable on the dark background. Imported by
+# ~/.config/alacritty/milk.toml, which the window manager passes to Alacritty
+# (wm.terminal), so other sessions keep their own theme. The setup wizard points
+# that import at the chosen theme.
+
+[window]
+padding = { x = 12, y = 10 }
+dynamic_padding = true
+opacity = 1.0
+
+[colors]
+draw_bold_text_with_bright_colors = false
+
+[colors.primary]
+background = "#1B211A"   # bar background
+foreground = "#E1E9D8"   # bar text
+dim_foreground = "#A9B39F"
+bright_foreground = "#F4FAEC"
+
+[colors.cursor]
+text = "#1B211A"
+cursor = "#A7C58A"       # bar accent
+
+[colors.vi_mode_cursor]
+text = "#1B211A"
+cursor = "#86A56B"
+
+[colors.selection]
+text = "CellForeground"
+background = "#334031"   # a shade of the bar surface
+
+[colors.search.matches]
+foreground = "#1B211A"
+background = "#86A56B"
+
+[colors.search.focused_match]
+foreground = "#1B211A"
+background = "#A7C58A"
+
+[colors.footer_bar]
+foreground = "#1B211A"
+background = "#A7C58A"
+
+[colors.hints.start]
+foreground = "#1B211A"
+background = "#E07A6A"
+
+[colors.hints.end]
+foreground = "#A7C58A"
+background = "#263025"
+
+[colors.normal]
+black   = "#303A2E"   # bar border colour
+red     = "#E07A6A"   # bar warning colour
+green   = "#A7C58A"
+yellow  = "#D8B86A"
+blue    = "#86AAC4"
+magenta = "#C49AB8"
+cyan    = "#86C0AE"
+white   = "#C3CCB9"
+
+[colors.bright]
+black   = "#7F8B76"   # bar muted colour
+red     = "#EC8D7E"
+green   = "#B9D59C"
+yellow  = "#E6C87E"
+blue    = "#99BCD5"
+magenta = "#D3ACC8"
+cyan    = "#99D1C0"
+white   = "#E1E9D8"
