@@ -22,7 +22,7 @@ write_rofi_theme :: proc(cfg: ^config.Config) {
 	dir := join({path, ".."})
 	if !os.is_directory(dir) { os.make_directory_all(dir) }
 	t := &cfg.bar.theme
-	pt := strings.has_prefix(cfg.bar.locale, "pt")
+	lang := cfg.bar.language
 	font := cfg.bar.font == "" ? "sans" : cfg.bar.font
 	// rofi takes a Pango font description: "Family Size" (fontconfig ":style" suffixes dropped).
 	if i := strings.index_byte(font, ':'); i >= 0 { font = font[:i] }
@@ -32,8 +32,8 @@ write_rofi_theme :: proc(cfg: ^config.Config) {
 		{"@BG@", t.background}, {"@FG@", t.foreground}, {"@MUTED@", t.muted}, {"@ACCENT@", t.accent},
 		{"@ACCENT_FG@", t.accent_foreground}, {"@SURFACE@", t.surface}, {"@WARNING@", t.warning},
 		{"@FONT@", fmt.tprintf("%s %d", font, max(cfg.bar.font_size * 3 / 4, 9))},
-		{"@APPS@", pt ? "Aplicativos" : "Apps"}, {"@RUN@", pt ? "Executar" : "Run"},
-		{"@WINDOWS@", pt ? "Janelas" : "Windows"}, {"@SEARCH@", pt ? "Buscar…" : "Search…"},
+		{"@APPS@", config.tr(lang, "Aplicativos", "Apps")}, {"@RUN@", config.tr(lang, "Executar", "Run")},
+		{"@WINDOWS@", config.tr(lang, "Janelas", "Windows")}, {"@SEARCH@", config.tr(lang, "Buscar…", "Search…")},
 	}
 	for pr in pairs { text, _ = strings.replace_all(text, pr[0], pr[1], context.temp_allocator) }
 	if err := os.write_entire_file(path, text); err != nil {

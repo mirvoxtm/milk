@@ -22,8 +22,12 @@ The installer asks what you want, installs every dependency and also sets up
 blur and smooth corners), next to milk.
 `./install.sh --yes` takes the defaults without asking.
 
-Then log out and pick milk on the login screen. The first start walks you through the theme,
+Then log out and pick milk on the login screen. The first start walks you through the language, theme,
 keyboard, wallpapers and bar. Change anything later with `milk settings`. It's as simple as that.
+Your settings live in `~/.config/milk/milk.json`.
+
+Updating from a version that kept `milk.json` inside the clone: if `git pull` refuses because of it,
+run `git checkout -- milk.json && git pull`. milk then starts from fresh settings and shows the setup again.
 
 ## Reasoning & Philosophy
 

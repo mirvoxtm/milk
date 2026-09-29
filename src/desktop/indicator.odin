@@ -77,10 +77,11 @@ indicator_open_font :: proc(d: ^Daemon) {
 	if !ok { d.indicator.font, _ = tx.font_open(d.c, "sans:bold", px) }
 }
 
-// "AREA 2 · Lazer", or "AREA 2" when the area has no name.
-indicator_caption :: proc(index: int, name: string, allocator := context.temp_allocator) -> string {
-	if strings.trim_space(name) == "" { return fmt.aprintf("AREA %d", index, allocator = allocator) }
-	return fmt.aprintf("AREA %d · %s", index, name, allocator = allocator)
+// "ÁREA 2 · Lazer", or "ÁREA 2" when the area has no name ("AREA 2" in English).
+indicator_caption :: proc(index: int, name: string, lang: config.Language, allocator := context.temp_allocator) -> string {
+	word := config.tr(lang, "ÁREA", "AREA")
+	if strings.trim_space(name) == "" { return fmt.aprintf("%s %d", word, index, allocator = allocator) }
+	return fmt.aprintf("%s %d · %s", word, index, name, allocator = allocator)
 }
 
 @(private)
@@ -110,7 +111,7 @@ indicator_show :: proc(d: ^Daemon, index: int, name: string) {
 	}
 	ind.index = index
 	delete(ind.text)
-	ind.text = indicator_caption(index, name, context.allocator)
+	ind.text = indicator_caption(index, name, d.cfg.bar.language, context.allocator)
 
 	font := ind.font
 	w := tx.text_width(c, font, ind.text) + 2 * TOAST_PAD_X

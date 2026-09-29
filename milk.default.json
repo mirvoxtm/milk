@@ -2,7 +2,7 @@
   "appearance": {
     "animationScale": 0.7,
     "theme": "milk",
-    "variant": "dark"
+    "variant": "light"
   },
   "bar": {
     "center": [
@@ -40,9 +40,8 @@
     "iconFontFile": "/usr/share/noctalia/assets/fonts/noctalia-tabler.ttf",
     "iconSize": 19,
     "launcherIcon": null,
-    "locale": "pt-BR",
+    "locale": "auto",
     "margin": 10,
-    "mediaIdleText": "Nada Reproduzindo",
     "monitor": "primary",
     "opacity": 1.0,
     "overrideRedirect": "auto",
@@ -54,18 +53,14 @@
     ],
     "style": "floating",
     "theme": {
-      "accent": "#D9C3A5",
-      "accentForeground": "#211D1A",
-      "background": "#211D1A",
-      "foreground": "#EDE3D8",
-      "muted": "#8C8279",
-      "surface": "#2E2925",
-      "warning": "#E07A6A"
+      "accent": "#4A3F35",
+      "accentForeground": "#F5EEE6",
+      "background": "#F5EEE6",
+      "foreground": "#3C3A38",
+      "muted": "#A89E94",
+      "surface": "#E9E0D6",
+      "warning": "#B5473A"
     }
-  },
-  "keyboard": {
-    "layout": "br",
-    "variant": "thinkpad"
   },
   "linux": {
     "indicator": {
@@ -100,14 +95,12 @@
   "version": 1,
   "wm": {
     "animation": 180,
-    "bindings": {
-      "super+w": "brave"
-    },
-    "borderColor": "#3A342F",
+    "bindings": {},
+    "borderColor": "#D8CEC3",
     "borderWidth": 0,
     "cornerRadius": 10,
     "enabled": true,
-    "focusColor": "#D9C3A5",
+    "focusColor": "#4A3F35",
     "focusFollowsMouse": true,
     "gaps": 12,
     "launcher": "rofi -show drun -theme \"$MILK_ROFI_THEME\"",
@@ -119,10 +112,6 @@
       {
         "class": "Gimp",
         "floating": true
-      },
-      {
-        "class": "Firefox",
-        "tags": 2
       }
     ],
     "screenshot": "",
@@ -156,23 +145,23 @@
       "wallpaper": null
     },
     "6": {
-      "name": "",
       "folder": "Area6",
+      "name": "",
       "wallpaper": null
     },
     "7": {
-      "name": "",
       "folder": "Area7",
+      "name": "",
       "wallpaper": null
     },
     "8": {
-      "name": "",
       "folder": "Area8",
+      "name": "",
       "wallpaper": null
     },
     "9": {
-      "name": "",
       "folder": "Area9",
+      "name": "",
       "wallpaper": null
     }
   }

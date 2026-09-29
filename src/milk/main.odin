@@ -45,6 +45,7 @@ Options :: struct {
 	value:        string,
 	runtime_root: string,
 	config_path:  string,
+	new_config:   bool, // the configuration was just created from the defaults
 	foreground:   bool,
 	no_bar:       bool,
 	no_wm:        bool,
@@ -75,7 +76,7 @@ options:
   --no-wm              do not act as the window manager (use dwm/openbox instead)
   --no-setup           skip the first-run setup wizard
   --runtime-root DIR   runtime data directory (default: <Documents>/milk/runtime or $MILK_RUNTIME)
-  --config FILE        configuration file (default: milk.json next to the binary's parent directory)
+  --config FILE        configuration file (default: $MILK_CONFIG or ~/.config/milk/milk.json)
   --verbose, -v        debug logging`)
 }
 
@@ -86,7 +87,13 @@ main :: proc() {
 		os.exit(2)
 	}
 	if opts.runtime_root == "" { opts.runtime_root = default_runtime_root() }
-	if opts.config_path == "" { opts.config_path = default_config_path() }
+	if opts.config_path == "" {
+		opts.config_path = default_config_path()
+		switch opts.command {
+		case "start", "restart", "setup", "settings", "test":
+			opts.new_config = create_default_config(opts.config_path)
+		}
+	}
 
 	code := 0
 	switch opts.command {
@@ -191,21 +198,37 @@ default_runtime_root :: proc() -> string {
 	return runtime
 }
 
+// The configuration lives outside the clone, so updating milk never touches it
+// (and it is never committed): $MILK_CONFIG, else
+// $XDG_CONFIG_HOME/milk/milk.json (~/.config/milk/milk.json).
 default_config_path :: proc() -> string {
-	if exe_dir, err := os.get_executable_directory(context.temp_allocator); err == nil {
-		candidates := [?]string{
-			join({exe_dir, "..", "milk.json"}),
-			join({exe_dir, "milk.json"}),
-			join({exe_dir, "..", "Temenos.json"}),
-		}
-		for candidate in candidates {
-			if os.is_file(candidate) {
-				cleaned, _ := filepath.clean(candidate)
-				return cleaned
-			}
-		}
+	if v, found := os.lookup_env("MILK_CONFIG", context.temp_allocator); found && v != "" { return strings.clone(v) }
+	config_home, found := os.lookup_env("XDG_CONFIG_HOME", context.temp_allocator)
+	if !found || config_home == "" {
+		home, has_home := os.lookup_env("HOME", context.temp_allocator)
+		config_home = join({has_home ? home : "/", ".config"}, context.temp_allocator)
 	}
-	return strings.clone("milk.json")
+	return join({config_home, "milk", "milk.json"})
+}
+
+// milk.default.json, built into the binary: language from the system, the
+// keyboard left as it is, no personal shortcuts.
+DEFAULT_CONFIG :: #load("../../milk.default.json", string)
+
+// Write the defaults when there is no configuration yet; true when it did
+// (milk then shows the setup wizard, whatever the runtime marker says).
+create_default_config :: proc(path: string) -> bool {
+	if os.exists(path) { return false }
+	dir := filepath.dir(path)
+	if err := os.make_directory_all(dir); err != nil && !os.is_directory(dir) {
+		fmt.eprintfln("milk: cannot create %s: %v", dir, err)
+		return false
+	}
+	if err := os.write_entire_file(path, DEFAULT_CONFIG); err != nil {
+		fmt.eprintfln("milk: cannot write %s: %v", path, err)
+		return false
+	}
+	return true
 }
 
 find_in_path :: proc(name: string) -> (string, bool) {
@@ -451,6 +474,8 @@ run :: proc(opts: ^Options, cfg: ^config.Config) -> int {
 	// Everything milk starts (the settings app from the gear card, helper
 	// scripts) finds this instance's runtime folder, pid file included.
 	os.set_env("MILK_RUNTIME", opts.runtime_root)
+	// Spoil, lactase and the settings app read the same milk.json.
+	if abs, ok := filepath.abs(opts.config_path, context.temp_allocator); ok == nil { os.set_env("MILK_CONFIG", abs) }
 	pid_file := join({opts.runtime_root, PID_NAME}, context.allocator)
 	g_pid_file = pid_file
 	if stop_instance(pid_file) { log.info("Replaced the previous milk instance") }
@@ -471,7 +496,7 @@ run :: proc(opts: ^Options, cfg: ^config.Config) -> int {
 	apply_keyboard(cfg)
 	// First run: the setup wizard (theme, wallpapers, bar, keyboard) comes
 	// before the window manager; its choices are read back from milk.json.
-	if !opts.no_setup && oobe.needed(opts.runtime_root) {
+	if !opts.no_setup && (opts.new_config || oobe.needed(opts.runtime_root)) {
 		log.info("First run: starting the setup wizard")
 		oobe.app_version = VERSION
 		if oobe.run(c, opts.config_path, opts.runtime_root) {

@@ -39,6 +39,7 @@ Control :: enum {
 	Clip_Enabled, Clip_Persist, Clip_Max,
 	Fx_Enabled,
 	Area_Name, // + area index
+	Th_Name, Th_Hex, // theme editor: name, hex field (+ Theme_Slot)
 	Sc_Command, Sc_Site, Sc_Search,
 }
 
@@ -73,6 +74,10 @@ Settings :: struct {
 	fx_children:    [dynamic]posix.pid_t, // lactase settings apps not reaped yet
 	names:          [dynamic][dynamic]u8,
 	sc:             Shortcuts,
+	ted:            Theme_Editor,
+	lay:            Layout_Editor,
+	bar_tab:        int,  // Barra: 0 style, 1 layouts, 2 widgets
+	themes_dirty:   bool, // write appearance.customThemes on the next save
 	text_target:    int, // Text_Field argument of the focused field
 
 	// Saving
@@ -163,6 +168,8 @@ settings_destroy :: proc(w: ^Wizard) {
 	clear_edits(w)
 	delete(s.edits)
 	shortcuts_destroy(w)
+	ted_destroy(w)
+	lay_destroy(w)
 	s^ = {}
 }
 
@@ -260,7 +267,7 @@ section_info :: proc(w: ^Wizard, s: Section) -> (icon: Icon, title, desc: string
 	case .Wallpapers:
 		return .Photo, tr(w, "Papéis de parede", "Wallpapers"), tr(w, "Uma imagem para todas as áreas ou uma para cada área.", "One image for every area or one per area.")
 	case .Bar:
-		return .Layout_Top, tr(w, "Barra", "Bar"), tr(w, "Posição, estilo, tamanho e formatos de data e hora.", "Position, style, size and date/time formats.")
+		return .Layout_Top, tr(w, "Barra", "Bar"), tr(w, "Posição, estilo, tamanho, widgets e formatos de data e hora.", "Position, style, size, widgets and date/time formats.")
 	case .Effects:
 		return .Sparkles, tr(w, "Efeitos", "Effects"), tr(w, "Sombras, animações e transparência com o lactase, o compositor do milk.", "Shadows, animations and transparency with lactase, milk's compositor.")
 	case .Windows:
@@ -268,7 +275,7 @@ section_info :: proc(w: ^Wizard, s: Section) -> (icon: Icon, title, desc: string
 	case .Shortcuts:
 		return .Command, tr(w, "Atalhos", "Shortcuts"), tr(w, "Combinações de teclas para abrir aplicativos, comandos e sites.", "Key combinations that open applications, commands and sites.")
 	case .Keyboard:
-		return .Keyboard, tr(w, "Teclado", "Keyboard"), tr(w, "Layout e variante, aplicados na hora.", "Layout and variant, applied at once.")
+		return .Keyboard, tr(w, "Idioma e teclado", "Language and keyboard"), tr(w, "Idioma do milk, layout e variante do teclado, aplicados na hora.", "milk's language and the keyboard layout and variant, applied at once.")
 	case .Notifications:
 		return .Bell, tr(w, "Notificações", "Notifications"), tr(w, "Avisos que aparecem no canto da tela.", "Pop-ups shown in a corner of the screen.")
 	case .Clipboard:
@@ -291,6 +298,10 @@ draw_settings :: proc(w: ^Wizard, cv: ^tx.Canvas) {
 	c := settings_content_rect(w)
 	switch s.section {
 	case .Appearance:
+		if s.ted.open {
+			draw_theme_editor(w, cv, c)
+			break
+		}
 		anim_h: i32 = 70
 		draw_theme_page(w, cv, {c.x, c.y, c.w, c.h - anim_h})
 		row := tx.Rect{c.x, c.y + c.h - anim_h + 14, c.w, SET_ROW_H}
@@ -302,10 +313,16 @@ draw_settings :: proc(w: ^Wizard, cv: ^tx.Canvas) {
 	case .Wallpapers:
 		draw_wallpaper_page(w, cv, c)
 	case .Bar:
-		top_h := min(i32(200), c.h / 2 - 20)
-		draw_bar_page(w, cv, {c.x, c.y, c.w, top_h})
-		ry := c.y + top_h + 12
-		rows_bar(w, cv, c, &ry)
+		body := draw_bar_tabs(w, cv, c)
+		switch s.bar_tab {
+		case 1: draw_layout_presets(w, cv, body)
+		case 2: draw_widget_editor(w, cv, body)
+		case:
+			top_h := min(i32(176), body.h / 2 - 20)
+			draw_bar_page(w, cv, {body.x, body.y, body.w, top_h})
+			ry := body.y + top_h + 12
+			rows_bar(w, cv, body, &ry)
+		}
 	case .Windows:
 		ry := c.y
 		rows_windows(w, cv, c, &ry)
@@ -314,7 +331,13 @@ draw_settings :: proc(w: ^Wizard, cv: ^tx.Canvas) {
 	case .Shortcuts:
 		draw_shortcuts(w, cv, c)
 	case .Keyboard:
-		draw_keyboard_page(w, cv, c)
+		row := tx.Rect{c.x, c.y, c.w, SET_ROW_H}
+		row_label(w, row, tr(w, "Idioma", "Language"), tr(w, "Menus, painéis, datas e este app", "Menus, panels, dates and this app"))
+		lw := min(i32(520), row.w - 220)
+		draw_language_control(w, cv, {row.x + row.w - lw, row.y + 8, lw, 40})
+		fill_rounded(cv, {c.x, row.y + row.h + 8, c.w, 1}, 0, mix(th.bg, th.muted, 0.25))
+		top := row.h + 24
+		draw_keyboard_page(w, cv, {c.x, c.y + top, c.w, c.h - top})
 	case .Notifications:
 		ry := c.y
 		rows_notifications(w, cv, c, &ry)
@@ -621,6 +644,7 @@ settings_action :: proc(w: ^Wizard, action: Action, arg: int) {
 	case .Text_Field:
 		w.focus = .Text
 		s.text_target = arg
+		if Control(arg / 100) == .Th_Hex { ted_select_slot(w, Theme_Slot(clamp(arg % 100, 0, len(Theme_Slot) - 1))) }
 	case .Rerun_Wizard:
 		path := join_path({w.runtime_root, MARKER_NAME})
 		if os.exists(path) { _ = os.remove(path) }
@@ -723,6 +747,10 @@ settings_text_buffer :: proc(w: ^Wizard) -> ^[dynamic]u8 {
 	case .Sc_Command: return &s.sc.ed.command
 	case .Sc_Site:    return &s.sc.ed.site
 	case .Sc_Search:  return &s.sc.ed.search
+	case .Th_Name:    return &s.ted.name
+	case .Th_Hex:
+		i := s.text_target % 100
+		if i >= 0 && i < len(Theme_Slot) { return &s.ted.hex[Theme_Slot(i)] }
 	}
 	return nil
 }
@@ -730,7 +758,10 @@ settings_text_buffer :: proc(w: ^Wizard) -> ^[dynamic]u8 {
 @(private)
 settings_text_insert :: proc(w: ^Wizard, text: string) {
 	buf := settings_text_buffer(w)
-	limit := Control(w.set.text_target / 100) >= .Sc_Command ? 240 : 48
+	ctrl := Control(w.set.text_target / 100)
+	limit := ctrl >= .Sc_Command ? 240 : 48
+	if ctrl == .Th_Name { limit = config.CUSTOM_THEME_NAME_MAX }
+	if ctrl == .Th_Hex { limit = 7 }
 	if buf == nil || len(buf) + len(text) > limit { return }
 	append(buf, ..transmute([]u8)text)
 	settings_text_edited(w)
@@ -757,6 +788,12 @@ settings_text_edited :: proc(w: ^Wizard) {
 		set_edit(w, fmt.tprintf("workspaces.%d.name", w.areas[i]), json.String(value))
 	case .Sc_Search:
 		s.sc.ed.scroll_apps = 0
+		return
+	case .Th_Name:
+		s.ted.error = ""
+		return // saved with the theme
+	case .Th_Hex:
+		ted_hex_edited(w, Theme_Slot(clamp(s.text_target % 100, 0, len(Theme_Slot) - 1)))
 		return
 	case:
 		return // editor fields are saved with the shortcut
@@ -808,10 +845,9 @@ settings_changed :: proc(w: ^Wizard, change: Change) {
 	delay := 0.25
 	switch change {
 	case .Theme:
-		preset := config.THEME_PRESETS[w.theme_index]
-		colors := w.dark ? preset.dark : preset.light
-		set_edit(w, "appearance.theme", json.String(preset.name))
-		set_edit(w, "appearance.variant", json.String(w.dark ? "dark" : "light"))
+		name, colors, dark := chosen_theme(w)
+		set_edit(w, "appearance.theme", json.String(name))
+		set_edit(w, "appearance.variant", json.String(dark ? "dark" : "light"))
 		set_edit(w, "bar.theme.background", json.String(colors.bar.background))
 		set_edit(w, "bar.theme.foreground", json.String(colors.bar.foreground))
 		set_edit(w, "bar.theme.muted", json.String(colors.bar.muted))
@@ -889,16 +925,20 @@ settings_save :: proc(w: ^Wizard) {
 			}
 		}
 	}
-	if len(s.edits) == 0 && !s.sc.dirty { return }
+	if len(s.edits) == 0 && !s.sc.dirty && !s.themes_dirty && !s.lay.dirty { return }
 	theme_changed := "appearance.theme" in s.edits || "appearance.variant" in s.edits
+	themes_changed := s.themes_dirty
 	if !write_edits(w) {
 		show_notice(w, tr(w, "Não foi possível salvar", "Could not save"))
 		return
 	}
 	clear_edits(w)
 	s.sc.dirty = false
+	s.themes_dirty = false
+	s.lay.dirty = false
 	s.saved_any = true
 	if theme_changed { update_alacritty(w) }
+	if themes_changed { remove_stale_alacritty(w) }
 	if signal_reload(w) {
 		show_notice(w, tr(w, "Salvo e aplicado", "Saved and applied"))
 	} else {
@@ -930,6 +970,15 @@ write_edits :: proc(w: ^Wizard) -> bool {
 		bindings := make(json.Object, context.temp_allocator)
 		for r in w.set.sc.rows { bindings[r.spec] = json.String(r.command) }
 		json_set(&root, {"wm", "bindings"}, bindings)
+	}
+	if w.set.themes_dirty {
+		// Rewritten whole too: renamed and deleted themes must disappear.
+		json_set(&root, {"appearance", "customThemes"}, themes_json(w))
+	}
+	if w.set.lay.dirty {
+		json_set(&root, {"bar", "start"}, lay_json(w, 0))
+		json_set(&root, {"bar", "center"}, lay_json(w, 1))
+		json_set(&root, {"bar", "end"}, lay_json(w, 2))
 	}
 	return write_json(root, path)
 }

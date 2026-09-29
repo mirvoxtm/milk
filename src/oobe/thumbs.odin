@@ -48,6 +48,7 @@ Candidate :: struct {
 	state:  Thumb_State, // atomic
 	seen:   bool,        // the main thread noticed the final state
 	scaled: [2]Scaled,   // resized copies (wizard allocator)
+	alias:  int,         // a copy milk made of this candidate: the one shown instead, else -1
 }
 
 @(private)
@@ -182,6 +183,7 @@ thumbs_start :: proc(w: ^Wizard) {
 
 	t.items = make([]Candidate, len(paths), w.allocator)
 	for p, i in paths { t.items[i].path = strings.clone(p, w.allocator) }
+	mark_copies(w)
 	t.pending = len(t.items)
 	log.debugf("Setup: %d wallpaper candidates", len(t.items))
 
@@ -212,6 +214,10 @@ thumb_worker :: proc(th: ^thread.Thread) {
 		i := sync.atomic_add(&t.next, 1)
 		if i >= len(t.items) { return }
 		item := &t.items[i]
+		if item.alias >= 0 { // a hidden copy: never drawn
+			sync.atomic_store(&item.state, Thumb_State.Failed)
+			continue
+		}
 		img, ok := load_thumb(item.path, t.cache_dir)
 		if ok {
 			item.thumb = img
@@ -427,15 +433,83 @@ candidate_scaled :: proc(w: ^Wizard, index: int, sw, sh: i32) -> (tx.Image, bool
 	return slot.img, true
 }
 
-// Candidates the grid shows: everything not known to have failed.
+// Candidates the grid shows: everything not known to have failed, except
+// milk's own copies of pictures that are shown already.
 @(private)
 visible_candidates :: proc(w: ^Wizard) -> []int {
 	out := make([dynamic]int, context.temp_allocator)
 	for &item, i in w.thumbs.items {
+		if item.alias >= 0 { continue }
 		if item.seen && sync.atomic_load(&item.state) == .Failed { continue }
 		append(&out, i)
 	}
 	return out[:]
+}
+
+// Saving copies the chosen pictures into the runtime Wallpapers folder as
+// All.<ext> / Area<N>.<ext>. Such a copy is not offered next to the picture it
+// came from (or next to an identical copy): it points at that candidate, so
+// milk.json naming "Area3.png" selects the original tile.
+@(private)
+mark_copies :: proc(w: ^Wizard) {
+	items := w.thumbs.items
+	wp_dir := join_path({w.runtime_root, w.cfg.paths.wallpapers})
+	sizes := make([]i64, len(items), context.temp_allocator)
+	keys := make([]u64, len(items), context.temp_allocator)
+	for &item, i in items {
+		item.alias = -1
+		if fi, err := os.stat(item.path, context.temp_allocator); err == nil { sizes[i] = fi.size }
+	}
+	for &item, i in items {
+		if sizes[i] <= 0 || !is_managed_copy(item.path, wp_dir) { continue }
+		best := -1
+		for other, j in items {
+			if j == i || sizes[j] != sizes[i] { continue }
+			if keys[i] == 0 { keys[i] = content_key(item.path, sizes[i]) }
+			if keys[j] == 0 { keys[j] = content_key(other.path, sizes[j]) }
+			if keys[i] != keys[j] { continue }
+			if !is_managed_copy(other.path, wp_dir) { best = j; break } // the original
+			if j < i && best < 0 { best = j }                          // the first identical copy
+		}
+		item.alias = best
+	}
+}
+
+// All.<ext> or Area<N>.<ext> directly in the runtime Wallpapers folder.
+@(private)
+is_managed_copy :: proc(path, wp_dir: string) -> bool {
+	clean_dir, _ := filepath.clean(wp_dir, context.temp_allocator)
+	if filepath.dir(path) != clean_dir { return false }
+	stem := filepath.stem(filepath.base(path))
+	if stem == "All" { return true }
+	if !strings.has_prefix(stem, "Area") || len(stem) == 4 { return false }
+	for ch in stem[4:] { if ch < '0' || ch > '9' { return false } }
+	return true
+}
+
+// Size plus a hash of the first and last 64 KiB: enough to tell copies apart.
+@(private)
+content_key :: proc(path: string, size: i64) -> u64 {
+	f, err := os.open(path)
+	if err != nil { return u64(size) | 1 << 63 }
+	defer os.close(f)
+	CHUNK :: 64 * 1024
+	buf := make([]byte, CHUNK, context.temp_allocator)
+	n, _ := os.read_at(f, buf, 0)
+	h := hash.fnv64a(buf[:n], u64(size) ~ 0xcbf29ce484222325)
+	if size > CHUNK {
+		m, _ := os.read_at(f, buf, max(size - CHUNK, CHUNK))
+		h = hash.fnv64a(buf[:m], h)
+	}
+	return h | 1 // never 0 ("not computed")
+}
+
+// The candidate shown for `index` (a hidden copy resolves to what it copies).
+@(private)
+shown_candidate :: proc(w: ^Wizard, index: int) -> int {
+	if index < 0 || index >= len(w.thumbs.items) { return index }
+	if a := w.thumbs.items[index].alias; a >= 0 { return a }
+	return index
 }
 
 // ---------------------------------------------------------------------------
@@ -443,7 +517,7 @@ visible_candidates :: proc(w: ^Wizard) -> []int {
 // ---------------------------------------------------------------------------
 @(private)
 candidate_index :: proc(w: ^Wizard, path: string) -> int {
-	for item, i in w.thumbs.items { if item.path == path { return i } }
+	for item, i in w.thumbs.items { if item.path == path { return shown_candidate(w, i) } }
 	return -1
 }
 
@@ -490,19 +564,24 @@ wallpaper_set_mode :: proc(w: ^Wizard, per_area: bool) {
 		}
 		w.wp_tab = 0
 	} else if len(w.wp_choice) > 0 {
+		// Keep the picture of the area being edited; if it has none, the first
+		// area that has one (so going back to "one for all" never wipes them).
 		w.wp_single = w.wp_choice[clamp(w.wp_tab, 0, len(w.wp_choice) - 1)]
+		if w.wp_single < 0 {
+			for v in w.wp_choice { if v >= 0 { w.wp_single = v; break } }
+		}
 	}
 	w.wp_per_area = per_area
 	w.base_dirty = true
 	w.dirty = true
 }
 
-// A tile was clicked: -1 = no wallpaper. In per-area mode the next area is selected afterwards.
+// A tile was clicked: -1 = no wallpaper. In per-area mode it goes to the area
+// selected above the grid (the tile stays marked; pick the next area yourself).
 @(private)
 wallpaper_pick :: proc(w: ^Wizard, index: int) {
 	if w.wp_per_area && len(w.wp_choice) > 0 {
-		w.wp_choice[w.wp_tab] = index
-		if w.wp_tab < len(w.wp_choice) - 1 { w.wp_tab += 1 }
+		w.wp_choice[clamp(w.wp_tab, 0, len(w.wp_choice) - 1)] = index
 	} else {
 		w.wp_single = index
 	}

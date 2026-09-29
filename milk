@@ -3,10 +3,12 @@
 # "Iniciar Temenos.vbs" in the Windows version). Rebuilds bin/milk with the Odin
 # compiler when it is missing or older than the sources; if a rebuild fails, the
 # previous binary keeps running so the session still starts. Runtime data lives
-# in <Documents>/milk/runtime (override with --runtime-root or $MILK_RUNTIME).
+# in <Documents>/milk/runtime (override with --runtime-root or $MILK_RUNTIME), the
+# settings in ~/.config/milk/milk.json (created from milk.default.json; override
+# with --config or $MILK_CONFIG).
 dir=$(dirname "$(readlink -f "$0")")
 bin="$dir/bin/milk"
-newest_source=$(find "$dir/src" -name '*.odin' -newer "$bin" 2>/dev/null | head -n 1)
+newest_source=$(find "$dir/src" "$dir/milk.default.json" \( -name '*.odin' -o -name milk.default.json \) -newer "$bin" 2>/dev/null | head -n 1)
 if [ ! -x "$bin" ] || [ -n "$newest_source" ]; then
     if ! "$dir/build.sh" >&2; then
         if [ -x "$bin" ]; then
@@ -17,4 +19,4 @@ if [ ! -x "$bin" ] || [ -n "$newest_source" ]; then
         fi
     fi
 fi
-exec "$bin" --config "$dir/milk.json" "$@"
+exec "$bin" "$@"

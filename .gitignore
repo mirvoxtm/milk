@@ -1,6 +1,10 @@
 # Build output
 bin/
 
+# Personal settings live in ~/.config/milk/milk.json; milk.default.json is
+# what a new installation starts from.
+milk.json
+
 # milk runtime (created next to the clone when it lives in Documents/milk)
 runtime/
 *.pid

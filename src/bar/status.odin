@@ -9,6 +9,7 @@ import "core:strconv"
 import "core:strings"
 import "core:sys/posix"
 import "core:time"
+import config "../config"
 
 Net_Kind :: enum { None, Wifi, Ethernet }
 
@@ -496,14 +497,6 @@ toggle_mute :: proc(b: ^Bar) {
 // ---------------------------------------------------------------------------
 // Date and clock
 // ---------------------------------------------------------------------------
-WEEKDAYS_PT     := [7]string{"dom", "seg", "ter", "qua", "qui", "sex", "sáb"}
-WEEKDAYS_PT_FULL := [7]string{"domingo", "segunda-feira", "terça-feira", "quarta-feira", "quinta-feira", "sexta-feira", "sábado"}
-MONTHS_PT       := [12]string{"jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez"}
-MONTHS_PT_FULL  := [12]string{"janeiro", "fevereiro", "março", "abril", "maio", "junho", "julho", "agosto", "setembro", "outubro", "novembro", "dezembro"}
-WEEKDAYS_EN     := [7]string{"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"}
-WEEKDAYS_EN_FULL := [7]string{"Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"}
-MONTHS_EN       := [12]string{"Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"}
-MONTHS_EN_FULL  := [12]string{"January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"}
 
 @(private)
 local_time :: proc() -> (tm: posix.tm, unix_nanos: i64) {
@@ -515,8 +508,7 @@ local_time :: proc() -> (tm: posix.tm, unix_nanos: i64) {
 
 // strftime subset: %a %A %d %e %b %B %m %y %Y %H %I %M %S %p %%.
 @(private)
-format_time :: proc(format: string, tm: posix.tm, locale: string, allocator := context.temp_allocator) -> string {
-	pt := strings.has_prefix(strings.to_lower(locale, context.temp_allocator), "pt")
+format_time :: proc(format: string, tm: posix.tm, lang: config.Language, allocator := context.temp_allocator) -> string {
 	wday := clamp(int(tm.tm_wday), 0, 6)
 	mon := clamp(int(tm.tm_mon), 0, 11)
 	sb := strings.builder_make(allocator)
@@ -528,10 +520,10 @@ format_time :: proc(format: string, tm: posix.tm, locale: string, allocator := c
 		}
 		i += 1
 		switch format[i] {
-		case 'a': strings.write_string(&sb, pt ? WEEKDAYS_PT[wday] : WEEKDAYS_EN[wday])
-		case 'A': strings.write_string(&sb, pt ? WEEKDAYS_PT_FULL[wday] : WEEKDAYS_EN_FULL[wday])
-		case 'b', 'h': strings.write_string(&sb, pt ? MONTHS_PT[mon] : MONTHS_EN[mon])
-		case 'B': strings.write_string(&sb, pt ? MONTHS_PT_FULL[mon] : MONTHS_EN_FULL[mon])
+		case 'a': strings.write_string(&sb, config.WEEKDAYS[lang][wday])
+		case 'A': strings.write_string(&sb, config.WEEKDAYS_FULL[lang][wday])
+		case 'b', 'h': strings.write_string(&sb, config.MONTHS[lang][mon])
+		case 'B': strings.write_string(&sb, config.MONTHS_FULL[lang][mon])
 		case 'd': fmt.sbprintf(&sb, "%02d", tm.tm_mday)
 		case 'e': fmt.sbprintf(&sb, "%2d", tm.tm_mday)
 		case 'm': fmt.sbprintf(&sb, "%02d", tm.tm_mon + 1)
@@ -555,8 +547,8 @@ format_time :: proc(format: string, tm: posix.tm, locale: string, allocator := c
 @(private)
 update_time_texts :: proc(b: ^Bar) -> bool {
 	tm, _ := local_time()
-	date := format_time(b.cfg.bar.date_format, tm, b.cfg.bar.locale)
-	clock := format_time(b.cfg.bar.clock_format, tm, b.cfg.bar.locale)
+	date := format_time(b.cfg.bar.date_format, tm, b.cfg.bar.language)
+	clock := format_time(b.cfg.bar.clock_format, tm, b.cfg.bar.language)
 	changed := false
 	if date != b.date_text {
 		delete(b.date_text)

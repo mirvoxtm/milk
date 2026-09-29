@@ -13,6 +13,7 @@ import "core:os"
 import "core:path/filepath"
 import "core:strings"
 import xlib "vendor:x11/xlib"
+import config "../config"
 import tx "../tx"
 
 @(private) SET_WIDTH   :: 330 // minimum; widened to fit the animation row
@@ -73,15 +74,16 @@ settings_toggle :: proc(b: ^Bar, w: ^Widget) {
 	card_map(b, &b.settings.card, true)
 }
 
+// The text in milk's language (bar.locale): Portuguese, English, or the Spanish of `en`.
 @(private)
-portuguese :: proc(b: ^Bar) -> bool { return strings.has_prefix(b.cfg.bar.locale, "pt") }
+tr :: proc(b: ^Bar, pt, en: string) -> string { return config.tr(b.cfg.bar.language, pt, en) }
 
 @(private)
 settings_rows :: proc(b: ^Bar) -> int { return 9 }
 
 @(private)
 anim_labels :: proc(b: ^Bar) -> [3]string {
-	return portuguese(b) ? {"Desligadas", "Rápidas", "Normais"} : {"Off", "Fast", "Normal"}
+	return {tr(b, "Desligadas", "Off"), tr(b, "Rápidas", "Fast"), tr(b, "Normais", "Normal")}
 }
 
 // Segment width for a label.
@@ -94,7 +96,7 @@ segment_width :: proc(b: ^Bar, label: string) -> i32 {
 settings_rect :: proc(b: ^Bar) -> tx.Rect {
 	w := i32(SET_WIDTH)
 	// The animation row: label + three segments must fit.
-	need := tx.text_width(b.c, b.font, portuguese(b) ? "Animações" : "Animations") + 16 + 2 * SET_PAD + 12
+	need := tx.text_width(b.c, b.font, tr(b, "Animações", "Animations")) + 16 + 2 * SET_PAD + 12
 	for l in anim_labels(b) { need += segment_width(b, l) }
 	w = max(w, need)
 	h := i32(SET_TITLE + settings_rows(b) * SET_ROW + SET_FOOTER + 6)
@@ -240,7 +242,7 @@ settings_write :: proc(b: ^Bar, path: []string, value: json.Value) {
 		return
 	}
 	tmp := fmt.tprintf("%s.tmp", b.config_path)
-	text := strings.concatenate({string(out), "\n"}, context.temp_allocator)
+	text := strings.concatenate({config.tidy_json_numbers(string(out)), "\n"}, context.temp_allocator)
 	if werr := os.write_entire_file(tmp, text); werr != nil {
 		log.errorf("Bar settings: cannot write %s: %v", tmp, werr)
 		return
@@ -262,7 +264,6 @@ settings_draw :: proc(b: ^Bar) {
 	c := b.c
 	th := &b.theme
 	cfg := b.cfg
-	pt := portuguese(b)
 	clear(&p.hits)
 	W, H := p.card.rect.w, p.card.rect.h
 	painter := painter_begin(b, W, H)
@@ -270,7 +271,7 @@ settings_draw :: proc(b: ^Bar) {
 
 	left := i32(SET_PAD)
 	right := W - SET_PAD
-	paint_text(pa, b.font, left, 4, SET_TITLE, pt ? "Ajustes rápidos" : "Quick settings", th.foreground)
+	paint_text(pa, b.font, left, 4, SET_TITLE, tr(b, "Ajustes rápidos", "Quick settings"), th.foreground)
 	row_y := i32(SET_TITLE)
 
 	button :: proc(pa: ^Card_Painter, r: tx.Rect, label: string, action: Settings_Action, dir: int, selected: bool) {
@@ -312,35 +313,35 @@ settings_draw :: proc(b: ^Bar) {
 	}
 
 	// Position and style share one segment width, wide enough for every label.
-	top_l, bottom_l := pt ? "Topo" : "Top", pt ? "Base" : "Bottom"
-	full_l, float_l := pt ? "Inteira" : "Full", pt ? "Flutuante" : "Floating"
+	top_l, bottom_l := tr(b, "Topo", "Top"), tr(b, "Base", "Bottom")
+	full_l, float_l := tr(b, "Inteira", "Full"), tr(b, "Flutuante", "Floating")
 	seg_w := i32(68)
 	for l in ([]string{top_l, bottom_l, full_l, float_l}) { seg_w = max(seg_w, segment_width(b, l)) }
-	label(pa, left, row_y, pt ? "Posição da barra" : "Bar position")
+	label(pa, left, row_y, tr(b, "Posição da barra", "Bar position"))
 	segments(pa, right, row_y, {top_l, bottom_l}, {seg_w, seg_w}, {.Position_Top, .Position_Bottom}, cfg.bar.position == "bottom" ? 1 : 0)
 	row_y += SET_ROW
-	label(pa, left, row_y, pt ? "Estilo da barra" : "Bar style")
+	label(pa, left, row_y, tr(b, "Estilo da barra", "Bar style"))
 	segments(pa, right, row_y, {full_l, float_l}, {seg_w, seg_w}, {.Style_Full, .Style_Floating}, cfg.bar.style == "floating" ? 1 : 0)
 	row_y += SET_ROW
 
-	label(pa, left, row_y, pt ? "Altura da barra" : "Bar height")
+	label(pa, left, row_y, tr(b, "Altura da barra", "Bar height"))
 	stepper(pa, right, row_y, fmt.tprintf("%d px", cfg.bar.height), .Height)
 	row_y += SET_ROW
-	label(pa, left, row_y, pt ? "Opacidade da barra" : "Bar opacity")
+	label(pa, left, row_y, tr(b, "Opacidade da barra", "Bar opacity"))
 	stepper(pa, right, row_y, fmt.tprintf("%d%%", int(math.round(cfg.bar.opacity * 100))), .Opacity)
 	row_y += SET_ROW
-	label(pa, left, row_y, pt ? "Espaçamento (gaps)" : "Gaps")
+	label(pa, left, row_y, tr(b, "Espaçamento (gaps)", "Gaps"))
 	stepper(pa, right, row_y, fmt.tprintf("%d px", cfg.wm.gaps), .Gaps)
 	row_y += SET_ROW
-	label(pa, left, row_y, pt ? "Borda das janelas" : "Window borders")
+	label(pa, left, row_y, tr(b, "Borda das janelas", "Window borders"))
 	stepper(pa, right, row_y, fmt.tprintf("%d px", cfg.wm.border_width), .Border)
 	row_y += SET_ROW
-	label(pa, left, row_y, pt ? "Área mestre" : "Master size")
+	label(pa, left, row_y, tr(b, "Área mestre", "Master size"))
 	stepper(pa, right, row_y, fmt.tprintf("%d%%", int(math.round(cfg.wm.master_factor * 100))), .Master)
 	row_y += SET_ROW
 
 	// Animation speed: the closest preset is selected.
-	label(pa, left, row_y, pt ? "Animações" : "Animations")
+	label(pa, left, row_y, tr(b, "Animações", "Animations"))
 	labels := anim_labels(b)
 	widths: [3]i32
 	for l, i in labels { widths[i] = segment_width(b, l) }
@@ -351,19 +352,19 @@ settings_draw :: proc(b: ^Bar) {
 	}
 	segments(pa, right, row_y, labels[:], widths[:], {.Anim_Off, .Anim_Fast, .Anim_Normal}, selected)
 	row_y += SET_ROW
-	label(pa, left, row_y, pt ? "Aviso de área" : "Area toast")
+	label(pa, left, row_y, tr(b, "Aviso de área", "Area toast"))
 	toggle(pa, right, row_y, cfg.linux.indicator.enabled, .Indicator)
 	row_y += SET_ROW
 
 	// Footer: the full settings app; the raw file as a small text button when it fits.
 	paint_divider(pa, left, row_y + 6, right - left)
-	all_label := pt ? "Todas as configurações" : "All settings"
+	all_label := tr(b, "Todas as configurações", "All settings")
 	all_w := tx.text_width(c, b.font, all_label) + 32
 	all := tx.Rect{right - all_w, row_y + 16, all_w, 30}
 	paint_button(pa, all, all_label, true, p.hover == len(p.hits))
 	append(&p.hits, Settings_Hit{r = all, action = .All_Settings})
 	config_name := filepath.base(b.config_path) if b.config_path != "" else "milk.json"
-	edit_label := fmt.tprintf("Editar %s" if pt else "Edit %s", config_name)
+	edit_label := fmt.tprintf(tr(b, "Editar %s", "Edit %s"), config_name)
 	edit_w := tx.text_width(c, b.font, edit_label) + 20
 	if b.config_path != "" && left - 10 + edit_w + 8 <= all.x {
 		edit := tx.Rect{left - 10, all.y, edit_w, all.h}

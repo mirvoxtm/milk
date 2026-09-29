@@ -153,7 +153,6 @@ bt_failed :: proc(job: ^Job) -> bool {
 bt_job_done :: proc(b: ^Bar, job: ^Job) {
 	m := &b.btm
 	output := string(job.output[:])
-	pt := portuguese(b)
 	#partial switch job.kind {
 	case .Bt_State:
 		m.querying = false
@@ -166,7 +165,7 @@ bt_job_done :: proc(b: ^Bar, job: ^Job) {
 		set_owned(&m.busy, "")
 		op := Bt_Op(job.step)
 		if bt_failed(job) {
-			fallback := pt ? "A operação falhou" : "The operation failed"
+			fallback := tr(b, "A operação falhou", "The operation failed")
 			if op == .Power {
 				set_owned(&m.error_mac, "power")
 			} else {
@@ -253,16 +252,15 @@ bt_parse_state :: proc(b: ^Bar, output: string) {
 // bluetoothctl's failure, in words people understand when it is a common one.
 @(private)
 bt_error_text :: proc(b: ^Bar, output, fallback: string) -> string {
-	pt := portuguese(b)
 	switch {
 	case strings.contains(output, "page-timeout"), strings.contains(output, "Host is down"), strings.contains(output, "ConnectionAttemptFailed"):
-		return pt ? "Fora de alcance ou desligado" : "Out of range or switched off"
+		return tr(b, "Fora de alcance ou desligado", "Out of range or switched off")
 	case strings.contains(output, "Authentication"):
-		return pt ? "Falha na autenticação" : "Authentication failed"
+		return tr(b, "Falha na autenticação", "Authentication failed")
 	case strings.contains(output, "not available"):
-		return pt ? "Dispositivo não encontrado" : "Device not found"
+		return tr(b, "Dispositivo não encontrado", "Device not found")
 	case strings.contains(output, "InProgress"):
-		return pt ? "Operação já em andamento" : "Already in progress"
+		return tr(b, "Operação já em andamento", "Already in progress")
 	}
 	msg := error_line(output, fallback)
 	for prefix in ([]string{"Failed to connect: ", "Failed to pair: ", "Failed to disconnect: "}) { msg = strings.trim_prefix(msg, prefix) }
@@ -366,7 +364,6 @@ bt_activate :: proc(b: ^Bar, hit: Menu_Hit) {
 @(private)
 bt_draw :: proc(b: ^Bar) {
 	m := &b.btm
-	pt := portuguese(b)
 	clear(&m.hits)
 	W := i32(MENU_WIDTH)
 	painter := painter_begin(b, W, menu_max_height(b), false)
@@ -378,16 +375,16 @@ bt_draw :: proc(b: ^Bar) {
 	y := i32(MENU_HEADER) + 4
 	switch {
 	case !b.tools.bluetoothctl:
-		paint_menu_message(pa, y, pt ? "O bluetoothctl (BlueZ) não está instalado." : "bluetoothctl (BlueZ) is not installed.")
+		paint_menu_message(pa, y, tr(b, "O bluetoothctl (BlueZ) não está instalado.", "bluetoothctl (BlueZ) is not installed."))
 		y += MENU_MESSAGE
 	case !m.known:
-		paint_menu_message(pa, y, pt ? "Carregando…" : "Loading…")
+		paint_menu_message(pa, y, tr(b, "Carregando…", "Loading…"))
 		y += MENU_MESSAGE
 	case !m.adapter:
-		paint_menu_message(pa, y, pt ? "Nenhum adaptador Bluetooth encontrado." : "No Bluetooth adapter found.")
+		paint_menu_message(pa, y, tr(b, "Nenhum adaptador Bluetooth encontrado.", "No Bluetooth adapter found."))
 		y += MENU_MESSAGE
 	case !bt_powered(b):
-		msg := pt ? "O Bluetooth está desligado." : "Bluetooth is off."
+		msg := tr(b, "O Bluetooth está desligado.", "Bluetooth is off.")
 		if m.error_mac == "power" && m.error_text != "" { msg = m.error_text }
 		paint_menu_message(pa, y, msg)
 		y += MENU_MESSAGE
@@ -404,33 +401,31 @@ bt_draw :: proc(b: ^Bar) {
 bt_paint_devices :: proc(b: ^Bar, pa: ^Card_Painter, y0: i32) -> i32 {
 	m := &b.btm
 	th := &b.theme
-	pt := portuguese(b)
 	W := pa.cv.w
 	y := y0
 	row :: proc(b: ^Bar, pa: ^Card_Painter, y: i32, d: Bt_Device, index: int, action: Menu_Action) {
 		m := &b.btm
 		th := &b.theme
-		pt := portuguese(b)
 		sub := ""
 		color := th.muted
 		busy := m.acting && m.busy == d.mac
 		switch {
 		case busy:
 			switch m.busy_op {
-			case .Pair:                  sub = pt ? "Pareando…" : "Pairing…"
-			case .Trust:                 sub = pt ? "Confiando…" : "Trusting…"
-			case .Connect, .Pair_Connect: sub = pt ? "Conectando…" : "Connecting…"
-			case .Disconnect:            sub = pt ? "Desconectando…" : "Disconnecting…"
+			case .Pair:                  sub = tr(b, "Pareando…", "Pairing…")
+			case .Trust:                 sub = tr(b, "Confiando…", "Trusting…")
+			case .Connect, .Pair_Connect: sub = tr(b, "Conectando…", "Connecting…")
+			case .Disconnect:            sub = tr(b, "Desconectando…", "Disconnecting…")
 			case .Power:
 			}
 		case m.error_mac == d.mac && m.error_text != "":
 			sub, color = m.error_text, th.warning
 		case d.connected && d.battery >= 0:
-			sub = fmt.tprintf("%s · %d%%", pt ? "Conectado" : "Connected", d.battery)
+			sub = fmt.tprintf("%s · %d%%", tr(b, "Conectado", "Connected"), d.battery)
 		case d.connected:
-			sub = pt ? "Conectado" : "Connected"
+			sub = tr(b, "Conectado", "Connected")
 		case !d.paired:
-			sub = pt ? "Clique para parear" : "Click to pair"
+			sub = tr(b, "Clique para parear", "Click to pair")
 		}
 		hovered := m.hover.action == action && m.hover.index == index
 		paint_menu_row(pa, y, d.icon, d.connected ? th.accent : th.foreground, d.name, sub, color, hovered, busy ? 24 : 0)
@@ -438,7 +433,7 @@ bt_paint_devices :: proc(b: ^Bar, pa: ^Card_Painter, y0: i32) -> i32 {
 		append(&m.hits, Menu_Hit{{8, y, pa.cv.w - 16, MENU_ROW}, action, index})
 	}
 
-	paint_menu_section(pa, y, pt ? "Dispositivos pareados" : "Paired devices")
+	paint_menu_section(pa, y, tr(b, "Dispositivos pareados", "Paired devices"))
 	y += MENU_SECTION
 	paired, others := 0, 0
 	for d, i in m.devices {
@@ -449,14 +444,14 @@ bt_paint_devices :: proc(b: ^Bar, pa: ^Card_Painter, y0: i32) -> i32 {
 		y += MENU_ROW
 	}
 	if paired == 0 {
-		paint_menu_message(pa, y, pt ? "Nenhum dispositivo pareado." : "No paired devices.")
+		paint_menu_message(pa, y, tr(b, "Nenhum dispositivo pareado.", "No paired devices."))
 		y += MENU_MESSAGE
 	}
 	for d in m.devices { if !d.paired { others += 1 } }
 	if others > 0 {
 		paint_divider(pa, MENU_PAD, y + 2, W - 2 * MENU_PAD)
 		y += 4
-		paint_menu_section(pa, y, pt ? "Outros dispositivos" : "Other devices")
+		paint_menu_section(pa, y, tr(b, "Outros dispositivos", "Other devices"))
 		y += MENU_SECTION
 		shown := 0
 		for d, i in m.devices {
@@ -468,7 +463,7 @@ bt_paint_devices :: proc(b: ^Bar, pa: ^Card_Painter, y0: i32) -> i32 {
 		}
 	}
 	// "Search for devices": a timed scan; a spinner while it runs.
-	label := m.scanning ? (pt ? "Procurando…" : "Searching…") : (pt ? "Procurar dispositivos" : "Search for devices")
+	label := m.scanning ? (tr(b, "Procurando…", "Searching…")) : (tr(b, "Procurar dispositivos", "Search for devices"))
 	r := tx.Rect{MENU_PAD, y + 8, W - 2 * MENU_PAD, 34}
 	fill := th.surface
 	if m.hover.action == .Bt_Scan && !m.scanning { fill = tx.color_mix(th.surface, th.muted, 0.35) }

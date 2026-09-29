@@ -4,6 +4,7 @@
 // icon layer), and application icons/names from desktop entries.
 package notify
 
+import "core:fmt"
 import "core:image"
 import "core:image/png"
 import _ "core:image/jpeg"
@@ -104,7 +105,7 @@ icons_destroy :: proc(l: ^Icon_Loader) {
 @(private)
 resolve_images :: proc(n: ^Notifier, notif: ^Notification, req: ^Notify_Request) {
 	l := &n.icons
-	entry_icon, entry_name := desktop_entry_info(req.desktop_entry, portuguese(n))
+	entry_icon, entry_name := desktop_entry_info(req.desktop_entry, n.cfg.bar.language)
 	if notif.app_name == "" && entry_name != "" {
 		delete(notif.app_name)
 		notif.app_name = strings.clone(entry_name)
@@ -129,7 +130,7 @@ resolve_images :: proc(n: ^Notifier, notif: ^Notification, req: ^Notify_Request)
 		lower := strings.to_lower(req.app_name, context.temp_allocator)
 		dashed, _ := strings.replace_all(lower, " ", "-", context.temp_allocator)
 		append(&candidates, dashed)
-		if other_icon, _ := desktop_entry_info(dashed, false); other_icon != "" { append(&candidates, other_icon) }
+		if other_icon, _ := desktop_entry_info(dashed, .English); other_icon != "" { append(&candidates, other_icon) }
 	}
 	for cand in candidates {
 		notif.icon = icon_image(l, cand, SMALL_ICON)
@@ -335,7 +336,7 @@ detect_icon_theme :: proc() -> string {
 
 // Icon= and Name= of <id>.desktop in the XDG application directories.
 @(private)
-desktop_entry_info :: proc(id: string, pt: bool) -> (icon, name: string) {
+desktop_entry_info :: proc(id: string, lang: config.Language) -> (icon, name: string) {
 	entry := strings.trim_space(id)
 	if entry == "" || strings.index_byte(entry, '/') >= 0 { return }
 	if strings.has_suffix(entry, ".desktop") { entry = entry[:len(entry) - len(".desktop")] }
@@ -348,8 +349,15 @@ desktop_entry_info :: proc(id: string, pt: bool) -> (icon, name: string) {
 		if !ok { continue }
 		icon = section["Icon"] or_else ""
 		name = section["Name"] or_else ""
-		if pt {
-			if v, has := section["Name[pt_BR]"]; has && v != "" { name = v } else if v2, has2 := section["Name[pt]"]; has2 && v2 != "" { name = v2 }
+		// Name[pt_BR], else Name[pt] (Name[es_ES], else Name[es]...).
+		if lang != .English {
+			full := config.language_code(lang)
+			short := full[:2]
+			if v, has := section[fmt.tprintf("Name[%s]", full)]; has && v != "" {
+				name = v
+			} else if v2, has2 := section[fmt.tprintf("Name[%s]", short)]; has2 && v2 != "" {
+				name = v2
+			}
 		}
 		return
 	}

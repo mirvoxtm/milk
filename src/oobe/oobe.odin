@@ -50,9 +50,12 @@ Action :: enum {
 	// Settings app
 	Section, Step, Toggle, Choice, Text_Field, Rerun_Wizard, Open_Config, Fx_Open,
 	Sc_Add, Sc_Edit, Sc_Delete, Sc_Capture, Sc_Kind, Sc_App, Sc_Save, Sc_Cancel, Sc_Builtin,
+	Th_New, Th_Edit, Th_Slot, Th_Variant, Th_Slider, Th_Swatch, Th_Save, Th_Cancel, Th_Delete,
+	Bar_Tab, Bar_Preset, Lw_Select, Lw_Move, Lw_Remove, Lw_Add,
+	Language,
 }
 
-@(private) Scroll_Id :: enum { None, Layouts, Variants, Wallpapers, Shortcuts, Apps }
+@(private) Scroll_Id :: enum { None, Layouts, Variants, Wallpapers, Shortcuts, Apps, Themes, Zone_Start, Zone_Center, Zone_End, Zone_Avail }
 
 @(private) Field :: enum { None, Search, Test, Text }
 
@@ -90,7 +93,8 @@ Wizard :: struct {
 	allocator:    runtime.Allocator,
 	config_path:  string,
 	runtime_root: string,
-	pt:           bool, // Portuguese labels
+	lang:         config.Language, // the language of the labels
+	locale_index: int,             // the bar.locale choice: an index into config.LANGUAGE_CODES
 	state:        State,
 	mode:         Mode,
 
@@ -122,8 +126,10 @@ Wizard :: struct {
 	focus:   Field,
 
 	// Choices
-	theme_index:  int,
+	theme_index:  int,          // THEME_PRESETS index, or len(THEME_PRESETS) + index into customs
 	dark:         bool,
+	customs:      [dynamic]User_Theme, // appearance.customThemes
+	scroll_themes: i32,
 	bar_top:      bool,
 	bar_floating: bool,
 	areas:        [dynamic]int, // workspace numbers from milk.json, sorted
@@ -213,13 +219,21 @@ wizard_setup :: proc(w: ^Wizard, c: ^tx.Connection, cfg: ^config.Config, config_
 	w.allocator = context.allocator
 	w.config_path = strings.clone(config_path)
 	w.runtime_root = strings.clone(runtime_root)
-	w.pt = strings.has_prefix(cfg.bar.locale, "pt")
+	w.lang = cfg.bar.language
+	w.locale_index = locale_choice(cfg.bar.locale)
 	w.base_image = -2
 	w.wp_single = -1
 
 	// Choices start from the current configuration.
 	for p, i in config.THEME_PRESETS { if p.name == cfg.appearance.theme { w.theme_index = i } }
 	w.dark = cfg.appearance.variant == "dark"
+	themes_load(w)
+	for t, i in w.customs {
+		if t.name == cfg.appearance.theme {
+			w.theme_index = len(config.THEME_PRESETS) + i
+			w.dark = t.dark
+		}
+	}
 	w.bar_top = cfg.bar.position != "bottom"
 	w.bar_floating = cfg.bar.style == "floating"
 	// Every area the window manager has (one per tag, 9 by default), plus any
@@ -233,7 +247,7 @@ wizard_setup :: proc(w: ^Wizard, c: ^tx.Connection, cfg: ^config.Config, config_
 	sort_ints(w.areas[:])
 	resize(&w.wp_choice, len(w.areas))
 	for &v in w.wp_choice { v = -1 }
-	w.theme = preset_theme(w.theme_index, w.dark)
+	w.theme = current_theme(w)
 	w.monitor = tx.monitor_rect(c, "primary")
 }
 
@@ -300,6 +314,7 @@ wizard_destroy :: proc(w: ^Wizard) {
 	thumbs_destroy(w)
 	keyboard_destroy(w)
 	settings_destroy(w)
+	themes_destroy(w)
 	close_fonts(w)
 	tx.canvas_destroy(&w.base)
 	delete(w.hits)
@@ -391,6 +406,7 @@ handle_event :: proc(w: ^Wizard, ev: ^xlib.XEvent) {
 		on_button(w, ev.xbutton.x, ev.xbutton.y, i32(ev.xbutton.button))
 	case .MotionNotify:
 		if ev.xmotion.window != w.win { return }
+		if w.mode == .Settings { theme_drag(w, ev.xmotion.x, .Button1Mask in ev.xmotion.state) }
 		on_motion(w, ev.xmotion.x, ev.xmotion.y)
 	case .LeaveNotify:
 		if w.hover.action != .None {
@@ -468,6 +484,11 @@ scroll_ptr :: proc(w: ^Wizard, id: Scroll_Id) -> ^i32 {
 	case .Wallpapers: return &w.scroll_wp
 	case .Shortcuts:  return &w.set.sc.scroll
 	case .Apps:       return &w.set.sc.ed.scroll_apps
+	case .Themes:     return &w.scroll_themes
+	case .Zone_Start: return &w.set.lay.scroll[0]
+	case .Zone_Center: return &w.set.lay.scroll[1]
+	case .Zone_End:   return &w.set.lay.scroll[2]
+	case .Zone_Avail: return &w.set.lay.scroll[3]
 	}
 	return nil
 }
@@ -515,12 +536,19 @@ do_action :: proc(w: ^Wizard, action: Action, arg: int) {
 		set_page(w, Page(clamp(arg % 100, 0, len(Page) - 1)))
 	case .Theme:
 		w.theme_index = arg
+		if t := selected_custom(w); t != nil { w.dark = t.dark } // the variant control shows the custom theme's
 		update_theme(w)
 		settings_changed(w, .Theme)
 	case .Variant:
 		w.dark = arg == 1
-		update_theme(w)
-		settings_changed(w, .Theme)
+		if theme_is_custom(w) {
+			w.dirty = true // a custom theme keeps its colours: only the preset cards change
+		} else {
+			update_theme(w)
+			settings_changed(w, .Theme)
+		}
+	case .Language:
+		language_pick(w, arg)
 	case .Kb_Search:
 		w.focus = .Search
 		w.dirty = true
@@ -552,6 +580,10 @@ do_action :: proc(w: ^Wizard, action: Action, arg: int) {
 		settings_action(w, action, arg)
 	case .Sc_Add, .Sc_Edit, .Sc_Delete, .Sc_Capture, .Sc_Kind, .Sc_App, .Sc_Save, .Sc_Cancel, .Sc_Builtin:
 		shortcuts_action(w, action, arg)
+	case .Th_New, .Th_Edit, .Th_Slot, .Th_Variant, .Th_Slider, .Th_Swatch, .Th_Save, .Th_Cancel, .Th_Delete:
+		themes_action(w, action, arg)
+	case .Bar_Tab, .Bar_Preset, .Lw_Select, .Lw_Move, .Lw_Remove, .Lw_Add:
+		layout_action(w, action, arg)
 	}
 }
 

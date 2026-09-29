@@ -175,18 +175,18 @@ local_tm :: proc(unix: i64) -> posix.tm {
 	return tm
 }
 
-// "agora", "5 min", "10:42", "28/09" (or the English equivalents).
+// "agora", "5 min", "10:42", "28/09" (09/28 in English).
 @(private)
 format_age :: proc(n: ^Notifier, unix: i64) -> string {
-	pt := portuguese(n)
 	now := now_unix()
 	age := now - unix
-	if age < 60 { return pt ? "agora" : "now" }
+	if age < 60 { return tr(n, "agora", "now") }
 	if age < 3600 { return fmt.tprintf("%d min", age / 60) }
 	then := local_tm(unix)
 	today := local_tm(now)
 	if then.tm_year == today.tm_year && then.tm_yday == today.tm_yday {
 		return fmt.tprintf("%02d:%02d", then.tm_hour, then.tm_min)
 	}
-	return pt ? fmt.tprintf("%02d/%02d", then.tm_mday, then.tm_mon + 1) : fmt.tprintf("%02d/%02d", then.tm_mon + 1, then.tm_mday)
+	if n.cfg.bar.language == .English { return fmt.tprintf("%02d/%02d", then.tm_mon + 1, then.tm_mday) }
+	return fmt.tprintf("%02d/%02d", then.tm_mday, then.tm_mon + 1)
 }

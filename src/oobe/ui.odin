@@ -34,6 +34,8 @@ Icon :: enum {
 	None, Sun, Moon, Check, Arrow_Left, Arrow_Right, Palette, Keyboard, Photo, Photo_Off,
 	Layout_Top, Layout_Bottom, Search, Sparkles, Rocket, Milk, Desktop, Bell, Clipboard, Layout_Grid, Info, App_Window,
 	Plus, Pencil, Trash, Chevron_Down, Chevron_Right, World, Terminal, Apps, Command, Alert,
+	Arrow_Up, Arrow_Down, Layout_Dashboard, Player_Play, Space, Wifi, Bluetooth, Volume, Battery, Calendar, Clock,
+	Settings, Power,
 }
 
 // Tabler codepoints (the font the bar uses; see /usr/share/noctalia/assets/fonts/tabler.json).
@@ -45,6 +47,9 @@ ICON_CODES := [Icon]rune{
 	.Desktop = 0xEA89, .Bell = 0xEA35, .Clipboard = 0xEA6F, .Layout_Grid = 0xEDBA, .Info = 0xEAC5, .App_Window = 0xEFE6,
 	.Plus = 0xEB0B, .Pencil = 0xEB04, .Trash = 0xEB41, .Chevron_Down = 0xEA5F, .Chevron_Right = 0xEA61, .World = 0xEB54,
 	.Terminal = 0xEBEF, .Apps = 0xEBB6, .Command = 0xEA78, .Alert = 0xEA06,
+	.Arrow_Up = 0xEA25, .Arrow_Down = 0xEA16, .Layout_Dashboard = 0xF02C, .Player_Play = 0xED46, .Space = 0xEC0C,
+	.Wifi = 0xEB52, .Bluetooth = 0xEA37, .Volume = 0xEB51, .Battery = 0xEA31, .Calendar = 0xEA53, .Clock = 0xEA70,
+	.Settings = 0xEB20, .Power = 0xEB0D,
 }
 
 foreign import xft_clip "system:Xft"
@@ -98,7 +103,7 @@ preset_theme :: proc(index: int, dark: bool) -> Theme {
 // The wizard wears the theme being chosen.
 @(private)
 update_theme :: proc(w: ^Wizard) {
-	w.theme = preset_theme(w.theme_index, w.dark)
+	w.theme = current_theme(w)
 	w.base_dirty = true
 	w.dirty = true
 }
@@ -706,7 +711,7 @@ render :: proc(w: ^Wizard) {
 }
 
 @(private)
-tr :: proc(w: ^Wizard, pt, en: string) -> string { return w.pt ? pt : en }
+tr :: proc(w: ^Wizard, pt, en: string) -> string { return config.tr(w.lang, pt, en) }
 
 @(private)
 draw_chrome :: proc(w: ^Wizard, cv: ^tx.Canvas) {

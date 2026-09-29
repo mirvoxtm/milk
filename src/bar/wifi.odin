@@ -219,7 +219,6 @@ wifi_job_done :: proc(b: ^Bar, job: ^Job) {
 		set_owned(&m.busy, "")
 		op := Wifi_Op(job.step)
 		ok := job_succeeded(job)
-		pt := portuguese(b)
 		switch op {
 		case .Radio:
 			if ok && m.radio_on { m.relist_at = tx.now() + 3 }
@@ -240,7 +239,7 @@ wifi_job_done :: proc(b: ^Bar, job: ^Job) {
 			set_owned(&m.expanded, "")
 			if !ok {
 				set_owned(&m.error_ssid, job.tag)
-				set_owned(&m.error_text, error_line(output, pt ? "Não foi possível desconectar" : "Could not disconnect"))
+				set_owned(&m.error_text, error_line(output, tr(b, "Não foi possível desconectar", "Could not disconnect")))
 			}
 		}
 		wifi_query(b)
@@ -311,17 +310,16 @@ wifi_parse_list :: proc(b: ^Bar, output: string) {
 // nmcli's failure, in words people understand when it is a common one.
 @(private)
 wifi_error_text :: proc(b: ^Bar, output: string) -> string {
-	pt := portuguese(b)
 	lower := strings.to_lower(output, context.temp_allocator)
 	switch {
 	case strings.contains(lower, "secrets were required"), strings.contains(lower, "802-1x"), strings.contains(lower, "psk"):
-		return pt ? "Senha incorreta ou necessária" : "Wrong or missing password"
+		return tr(b, "Senha incorreta ou necessária", "Wrong or missing password")
 	case strings.contains(lower, "timeout"), strings.contains(lower, "timed out"):
-		return pt ? "Tempo esgotado ao conectar" : "Timed out while connecting"
+		return tr(b, "Tempo esgotado ao conectar", "Timed out while connecting")
 	case strings.contains(lower, "no network with ssid"):
-		return pt ? "Rede fora de alcance" : "Network out of range"
+		return tr(b, "Rede fora de alcance", "Network out of range")
 	}
-	msg := error_line(output, pt ? "Não foi possível conectar" : "Could not connect")
+	msg := error_line(output, tr(b, "Não foi possível conectar", "Could not connect"))
 	return strings.trim_prefix(msg, "Connection activation failed: ")
 }
 
@@ -495,7 +493,6 @@ wifi_connect_password :: proc(b: ^Bar, index: int) {
 wifi_draw :: proc(b: ^Bar) {
 	m := &b.wifi
 	th := &b.theme
-	pt := portuguese(b)
 	clear(&m.hits)
 	W := i32(MENU_WIDTH)
 	painter := painter_begin(b, W, menu_max_height(b), false)
@@ -512,21 +509,21 @@ wifi_draw :: proc(b: ^Bar) {
 	if has_switch { hit(m, sw, .Wifi_Radio) }
 	y := i32(MENU_HEADER) + 4
 	if !b.tools.nmcli {
-		paint_menu_message(pa, y, pt ? "O NetworkManager (nmcli) não está instalado." : "NetworkManager (nmcli) is not installed.")
+		paint_menu_message(pa, y, tr(b, "O NetworkManager (nmcli) não está instalado.", "NetworkManager (nmcli) is not installed."))
 		y += MENU_MESSAGE
 	} else {
 		if m.wired {
-			sub := pt ? "Conectado" : "Connected"
+			sub := tr(b, "Conectado", "Connected")
 			if m.wired_name != "" { sub = fmt.tprintf("%s · %s", sub, m.wired_name) }
-			paint_menu_row(pa, y, .Ethernet, th.accent, pt ? "Rede cabeada" : "Wired network", sub, th.muted, false)
+			paint_menu_row(pa, y, .Ethernet, th.accent, tr(b, "Rede cabeada", "Wired network"), sub, th.muted, false)
 			y += MENU_ROW
 		}
 		if m.radio_known && !m.radio_on {
-			paint_menu_message(pa, y, pt ? "O Wi-Fi está desligado." : "Wi-Fi is off.")
+			paint_menu_message(pa, y, tr(b, "O Wi-Fi está desligado.", "Wi-Fi is off."))
 			y += MENU_MESSAGE
 		} else {
 			y = wifi_paint_current(b, pa, y)
-			paint_menu_section(pa, y, pt ? "Redes disponíveis" : "Available networks")
+			paint_menu_section(pa, y, tr(b, "Redes disponíveis", "Available networks"))
 			rescan := tx.Rect{W - MENU_PAD - 30, y + 3, 30, 30}
 			paint_icon_button(pa, rescan, .Refresh, m.scanning, hovered(m, .Wifi_Rescan))
 			hit(m, rescan, .Wifi_Rescan)
@@ -541,8 +538,8 @@ wifi_draw :: proc(b: ^Bar) {
 			if shown == 0 {
 				msg: string
 				switch {
-				case m.scanning || !m.listed: msg = pt ? "Procurando redes…" : "Looking for networks…"
-				case: msg = pt ? "Nenhuma outra rede encontrada." : "No other networks found."
+				case m.scanning || !m.listed: msg = tr(b, "Procurando redes…", "Looking for networks…")
+				case: msg = tr(b, "Nenhuma outra rede encontrada.", "No other networks found.")
 				}
 				paint_menu_message(pa, y, msg)
 				y += MENU_MESSAGE
@@ -554,7 +551,7 @@ wifi_draw :: proc(b: ^Bar) {
 		r := tx.Rect{8, y + 10, W - 16, 36}
 		if hovered(m, .Wifi_Editor) { tx.canvas_fill_rounded_rect(&pa.cv, r, 12, th.surface) }
 		paint_icon(pa, .Settings, {MENU_PAD, r.y, 28, r.h}, th.foreground)
-		paint_text(pa, b.font, MENU_PAD + 38, r.y, r.h, pt ? "Configurações de rede" : "Network settings", th.foreground)
+		paint_text(pa, b.font, MENU_PAD + 38, r.y, r.h, tr(b, "Configurações de rede", "Network settings"), th.foreground)
 		hit(m, r, .Wifi_Editor)
 		y += MENU_FOOTER
 	} else {
@@ -570,21 +567,20 @@ wifi_draw :: proc(b: ^Bar) {
 wifi_paint_current :: proc(b: ^Bar, pa: ^Card_Painter, y0: i32) -> i32 {
 	m := &b.wifi
 	th := &b.theme
-	pt := portuguese(b)
 	ssid, signal, ok := wifi_current(m)
 	if !ok { return y0 }
 	y := y0
 	W := pa.cv.w
 	expanded := m.expanded == ssid
-	sub := pt ? "Conectado" : "Connected"
+	sub := tr(b, "Conectado", "Connected")
 	if signal >= 0 { sub = fmt.tprintf("%s · %d%%", sub, signal) }
 	color := th.muted
 	if m.acting && m.busy == ssid {
-		sub = pt ? "Desconectando…" : "Disconnecting…"
+		sub = tr(b, "Desconectando…", "Disconnecting…")
 	} else if m.error_ssid == ssid && m.error_text != "" {
 		sub, color = m.error_text, th.warning
 	}
-	label := pt ? "Desconectar" : "Disconnect"
+	label := tr(b, "Desconectar", "Disconnect")
 	button_w := tx.text_width(b.c, b.font, label) + 28
 	reserve := expanded ? button_w + 8 : 0
 	row_hover := m.hover.action == .Wifi_Current && !expanded
@@ -604,7 +600,6 @@ wifi_paint_current :: proc(b: ^Bar, pa: ^Card_Painter, y0: i32) -> i32 {
 wifi_paint_network :: proc(b: ^Bar, pa: ^Card_Painter, y0: i32, net: Wifi_Network, index: int) -> i32 {
 	m := &b.wifi
 	th := &b.theme
-	pt := portuguese(b)
 	y := y0
 	W := pa.cv.w
 	busy := m.acting && m.busy == net.ssid
@@ -613,9 +608,9 @@ wifi_paint_network :: proc(b: ^Bar, pa: ^Card_Painter, y0: i32, net: Wifi_Networ
 	sub := ""
 	color := th.muted
 	switch {
-	case busy:   sub = pt ? "Conectando…" : "Connecting…"
+	case busy:   sub = tr(b, "Conectando…", "Connecting…")
 	case failed: sub, color = m.error_text, th.warning
-	case saved:  sub = pt ? "Salva" : "Saved"
+	case saved:  sub = tr(b, "Salva", "Saved")
 	}
 	open := m.expanded == net.ssid && net.secured
 	row_hover := m.hover.action == .Wifi_Network && m.hover.index == index
@@ -630,7 +625,7 @@ wifi_paint_network :: proc(b: ^Bar, pa: ^Card_Painter, y0: i32, net: Wifi_Networ
 	if !open || saved && !failed { return y }
 
 	// Inline password field and the connect button.
-	label := pt ? "Conectar" : "Connect"
+	label := tr(b, "Conectar", "Connect")
 	button_w := tx.text_width(b.c, b.font, label) + 28
 	field := tx.Rect{MENU_PAD + 38, y + 4, W - 2 * MENU_PAD - 38 - button_w - 8, 34}
 	tx.canvas_fill_rounded_rect(&pa.cv, field, 10, th.surface)
@@ -638,7 +633,7 @@ wifi_paint_network :: proc(b: ^Bar, pa: ^Card_Painter, y0: i32, net: Wifi_Networ
 	inner := field.w - 24
 	text_x := field.x + 12
 	if len(m.password) == 0 {
-		paint_text(pa, b.font, text_x + 5, field.y, field.h, pt ? "Senha" : "Password", th.muted)
+		paint_text(pa, b.font, text_x + 5, field.y, field.h, tr(b, "Senha", "Password"), th.muted)
 	} else {
 		dots := strings.repeat("•", strings.rune_count(string(m.password[:])), context.temp_allocator)
 		for len(dots) > 0 && tx.text_width(b.c, b.font, dots) > inner - 4 { dots = dots[len("•"):] } // show the tail

@@ -20,7 +20,8 @@ draw_welcome :: proc(w: ^Wizard, cv: ^tx.Canvas) {
 
 	logo: i32 = 88
 	feature_h: i32 = 132
-	total := logo + 28 + 44 + 30 + 40 + feature_h
+	lang_h: i32 = 44
+	total := logo + 28 + 44 + 30 + 40 + feature_h + 28 + lang_h
 	y := area.y + max((area.h - total) / 2, 0)
 	cx := area.x + area.w / 2
 
@@ -59,14 +60,25 @@ draw_welcome :: proc(w: ^Wizard, cv: ^tx.Canvas) {
 		text_centered(w, w.f_small, {r.x, r.y + 96, r.w, 20}, ellipsize(w, w.f_small, f.desc, r.w - 16), mix(th.fg, th.muted, 0.6))
 		x += fw + gap
 	}
+	y += feature_h + 28
+
+	// The language, so the rest of the wizard is already in it.
+	lang_w := min(i32(620), 4 * fw + 3 * gap)
+	draw_language_control(w, cv, {cx - lang_w / 2, y, lang_w, lang_h})
 }
 
 // ---------------------------------------------------------------------------
 // Theme
 // ---------------------------------------------------------------------------
 @(private)
-draw_theme_page :: proc(w: ^Wizard, cv: ^tx.Canvas, c: tx.Rect) {
+draw_theme_page :: proc(w: ^Wizard, cv: ^tx.Canvas, area: tx.Rect) {
 	th := &w.theme
+	// The user's own themes get a strip under the presets.
+	c := area
+	if strip := custom_strip_height(w, area); strip > 0 {
+		c.h -= strip
+		draw_custom_themes(w, cv, {area.x, c.y + c.h + 14, area.w, strip - 14})
+	}
 	segmented(w, cv, {c.x, c.y, 300, 44}, {tr(w, "Claro", "Light"), tr(w, "Escuro", "Dark")}, {.Sun, .Moon},
 	          w.dark ? 1 : 0, .Variant)
 
@@ -359,7 +371,7 @@ candidate_name :: proc(w: ^Wizard, index: int) -> string {
 draw_wallpaper_page :: proc(w: ^Wizard, cv: ^tx.Canvas, c: tx.Rect) {
 	th := &w.theme
 	segmented(w, cv, {c.x, c.y, min(i32(460), c.w * 3 / 5), 44},
-	          {tr(w, "Um para todas as áreas", "One for every area"), tr(w, "Um por área", "One per area")}, {.Desktop, .Photo},
+	          {tr(w, "A mesma em todas", "Same on all"), tr(w, "Uma por área", "One per area")}, {.Desktop, .Photo},
 	          w.wp_per_area ? 1 : 0, .Wp_Mode)
 
 	total := len(w.thumbs.items)
@@ -381,30 +393,44 @@ draw_wallpaper_page :: proc(w: ^Wizard, cv: ^tx.Canvas, c: tx.Rect) {
 
 	y := c.y + 44 + 16
 	if w.wp_per_area {
-		chip_w: i32 = 104
+		// One chip per area, all of them: they shrink to a numbered thumbnail
+		// when nine do not fit side by side, and wrap if even that is too wide.
+		count := i32(max(len(w.areas), 1))
+		gap_x: i32 = 8
 		chip_h: i32 = 52
-		x := c.x
+		chip_w := clamp((c.w - (count - 1) * gap_x) / count, 60, 104)
+		per_row := max((c.w + gap_x) / (chip_w + gap_x), 1)
+		compact := chip_w < 96
 		for n, i in w.areas {
-			r := tx.Rect{x, y, chip_w, chip_h}
-			if r.x + r.w > c.x + c.w { break }
+			col, row := i32(i) % per_row, i32(i) / per_row
+			r := tx.Rect{c.x + col * (chip_w + gap_x), y + row * (chip_h + gap_x), chip_w, chip_h}
 			sel := i == w.wp_tab
 			hot := hovered(w, .Wp_Area, i)
 			tx.canvas_fill_rounded_rect(cv, r, 16, sel ? mix(th.accent, th.bg, 0.85) : (hot ? th.hover : th.field))
 			if sel { tx.canvas_stroke_rounded_rect(cv, r, 16, 2, th.accent) }
-			thumb := tx.Rect{r.x + 8, r.y + 8, 64, 36}
+			thumb := compact ? tx.Rect{r.x + 6, r.y + 6, r.w - 12, r.h - 12} : tx.Rect{r.x + 8, r.y + 8, 64, 36}
+			radius: f32 = compact ? 11 : 8
 			choice := w.wp_choice[i]
 			if img, ok := candidate_scaled(w, choice, thumb.w, thumb.h); ok {
-				blit_rounded(cv, img, thumb.x, thumb.y, 8)
+				blit_rounded(cv, img, thumb.x, thumb.y, radius)
 			} else {
-				tx.canvas_fill_rounded_rect(cv, thumb, 8, choice < 0 ? th.bg : th.surface)
-				tx.canvas_stroke_rounded_rect(cv, thumb, 8, 1, th.outline)
-				if choice < 0 { icon(w, w.f_icon_small, thumb, .Photo_Off, th.muted) }
+				tx.canvas_fill_rounded_rect(cv, thumb, radius, choice < 0 ? th.bg : th.surface)
+				tx.canvas_stroke_rounded_rect(cv, thumb, radius, 1, th.outline)
+				if choice < 0 && !compact { icon(w, w.f_icon_small, thumb, .Photo_Off, th.muted) }
 			}
-			text_centered(w, w.f_h2, {thumb.x + thumb.w, r.y, r.x + r.w - thumb.x - thumb.w, r.h}, fmt.tprintf("%d", n), sel ? th.accent : th.fg)
+			label := fmt.tprintf("%d", n)
+			if compact {
+				// The area number in a badge over the thumbnail's corner.
+				bx, by := thumb.x + thumb.w - 12, thumb.y + thumb.h - 12
+				tx.canvas_fill_circle(cv, f32(bx), f32(by), 11, sel ? th.accent : tx.color_with_alpha(th.bg, 235))
+				text_centered(w, w.f_tiny, {bx - 11, by - 12, 22, 24}, label, sel ? th.accent_fg : th.fg)
+			} else {
+				text_centered(w, w.f_h2, {thumb.x + thumb.w, r.y, r.x + r.w - thumb.x - thumb.w, r.h}, label, sel ? th.accent : th.fg)
+			}
 			add_hit(w, r, .Wp_Area, i)
-			x += chip_w + 10
 		}
-		y += chip_h + 14
+		rows := (count + per_row - 1) / per_row
+		y += rows * (chip_h + gap_x) - gap_x + 14
 	}
 
 	// Grid.
@@ -458,12 +484,20 @@ draw_wallpaper_page :: proc(w: ^Wizard, cv: ^tx.Canvas, c: tx.Rect) {
 		}
 		// Other areas using this picture.
 		if w.wp_per_area {
-			bx := t.x + 10
+			users := make([dynamic]int, context.temp_allocator)
 			for j in 0 ..< len(w.areas) {
-				if j == w.wp_tab || w.wp_choice[j] != index { continue }
-				tx.canvas_fill_circle(&sub, f32(bx + 11), f32(t.y + t.h - 21), 12, tx.color_with_alpha(th.bg, 235))
-				text_centered(w, w.f_tiny, {vp.x + bx, vp.y + t.y + t.h - 33, 22, 24}, fmt.tprintf("%d", w.areas[j]), th.fg, vp)
+				if j != w.wp_tab && w.wp_choice[j] == index { append(&users, w.areas[j]) }
+			}
+			// Top left (the check mark is top right). As many badges as fit; the last one says "+N" when more areas use it.
+			fit := max(int((t.w - 20) / 28), 1)
+			bx := t.x + 10
+			for area, u in users {
+				label := fmt.tprintf("%d", area)
+				if u == fit - 1 && len(users) > fit { label = fmt.tprintf("+%d", len(users) - u) }
+				tx.canvas_fill_circle(&sub, f32(bx + 11), f32(t.y + 21), 12, tx.color_with_alpha(th.bg, 235))
+				text_centered(w, w.f_tiny, {vp.x + bx, vp.y + t.y + 9, 22, 24}, label, th.fg, vp)
 				bx += 28
+				if u == fit - 1 { break }
 			}
 		}
 		add_hit(w, win_t, .Wp_Tile, index, vp)
@@ -481,8 +515,11 @@ draw_wallpaper_page :: proc(w: ^Wizard, cv: ^tx.Canvas, c: tx.Rect) {
 // Bar
 // ---------------------------------------------------------------------------
 @(private)
-draw_bar_page :: proc(w: ^Wizard, cv: ^tx.Canvas, c: tx.Rect) {
+draw_bar_page :: proc(w: ^Wizard, cv: ^tx.Canvas, area: tx.Rect) {
 	th := &w.theme
+	// The wizard also offers the widget layouts under the cards.
+	c := area
+	if w.mode == .Wizard && area.h > 420 { c.h -= 132 }
 	gap: i32 = 20
 	cols: i32 = 4
 	card_w := (c.w - (cols - 1) * gap) / cols
@@ -528,6 +565,7 @@ draw_bar_page :: proc(w: ^Wizard, cv: ^tx.Canvas, c: tx.Rect) {
 		text(w, w.f_small, r.x + 16, p.y + p.h + 34, 20, ellipsize(w, w.f_small, opt.desc, r.w - 32), mix(th.fg, th.muted, 0.6))
 		add_hit(w, r, .Bar_Choice, i)
 	}
+	if c.h != area.h { draw_wizard_layouts(w, cv, {area.x, top + grid_h + 32, area.w, 122}) }
 }
 
 // A miniature of the desktop: wallpaper (or the bar colour), the bar in the
@@ -634,7 +672,7 @@ draw_summary_page :: proc(w: ^Wizard, cv: ^tx.Canvas) {
 	rx := c.x + mw + 40
 	rw := c.x + c.w - rx
 	Row :: struct { icon: Icon, label, value: string, page: Page }
-	theme_value := fmt.tprintf("%s · %s", config.THEME_PRESETS[w.theme_index].title, w.dark ? tr(w, "Escuro", "Dark") : tr(w, "Claro", "Light"))
+	theme_value := fmt.tprintf("%s · %s", theme_title(w), w.dark ? tr(w, "Escuro", "Dark") : tr(w, "Claro", "Light"))
 	kb_value := fmt.tprintf("%s · %s", layout_desc(w, w.kb.layout), variant_desc(w))
 	wp_value: string
 	if w.wp_per_area {

@@ -299,7 +299,9 @@ measure :: proc(b: ^Bar, w: ^Widget, title_limit, media_limit: i32) {
 		switch b.media.status {
 		case .Idle:
 			set_icon(b, w, .Media_Idle)
-			set_text(b, w, b.cfg.bar.media_idle_text, media_limit)
+			idle := b.cfg.bar.media_idle_text
+			if idle == "" { idle = tr(b, "Nada Reproduzindo", "Nothing playing") }
+			set_text(b, w, idle, media_limit)
 			w.icon_color = th.muted
 			w.text_color = th.muted
 		case .Playing:

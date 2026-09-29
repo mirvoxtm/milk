@@ -634,23 +634,23 @@ text_op :: proc(f: ^tx.Font, x, row_y, row_h: i32, s: string, color: tx.Color) -
 }
 
 @(private)
-human_size :: proc(n: int, pt: bool) -> string {
+human_size :: proc(n: int, comma: bool) -> string {
 	switch {
 	case n < 1024:        return fmt.tprintf("%d B", n)
 	case n < 1024 * 1024: return fmt.tprintf("%d KB", (n + 512) / 1024)
 	}
 	s := fmt.tprintf("%.1f MB", f64(n) / (1024 * 1024))
-	if pt { s, _ = strings.replace_all(s, ".", ",", context.temp_allocator) }
+	if comma { s, _ = strings.replace_all(s, ".", ",", context.temp_allocator) }
 	return s
 }
 
 @(private)
-image_caption :: proc(it: ^Item, pt: bool) -> string {
+image_caption :: proc(it: ^Item, comma: bool) -> string {
 	kind := it.mime == "image/png" ? "PNG" : it.mime == "image/jpeg" ? "JPEG" : "BMP"
 	if it.w > 0 && it.h > 0 {
-		return fmt.tprintf("%d × %d  ·  %s  ·  %s", it.w, it.h, kind, human_size(len(it.data), pt))
+		return fmt.tprintf("%d × %d  ·  %s  ·  %s", it.w, it.h, kind, human_size(len(it.data), comma))
 	}
-	return fmt.tprintf("%s  ·  %s", kind, human_size(len(it.data), pt))
+	return fmt.tprintf("%s  ·  %s", kind, human_size(len(it.data), comma))
 }
 
 // Paint `color` over the corners of `r` outside a rounded rectangle of `radius`.
@@ -691,7 +691,7 @@ panel_draw :: proc(cb: ^Clipboard) {
 	p := &cb.panel
 	c := cb.c
 	th := &p.theme
-	pt := portuguese(cb)
+	comma := cb.cfg.bar.language != .English // decimal comma
 	clear(&p.hits)
 
 	cv := tx.canvas_make(p.rect.w, p.rect.h)
@@ -719,13 +719,13 @@ panel_draw :: proc(cb: ^Clipboard) {
 		append(&head, glyph_op(cb, p.icons, {hx, head_row.y, 22, head_row.h}, glyph(GLYPH_CLIPBOARD), th.accent))
 		hx += 32
 	}
-	title := pt ? "Área de transferência" : "Clipboard"
+	title := tr(cb, "Área de transferência", "Clipboard")
 	append(&head, text_op(p.bold, hx, head_row.y, head_row.h, title, th.foreground))
 
 	has_unpinned := false
 	for it in cb.items { if !it.pinned { has_unpinned = true } }
 	if len(cb.items) > 0 {
-		label := pt ? "Limpar tudo" : "Clear all"
+		label := tr(cb, "Limpar tudo", "Clear all")
 		bw := tx.text_width(c, p.font, label) + 28
 		br := tx.Rect{card.x + card.w - PAD - bw, head_row.y + (head_row.h - 30) / 2, bw, 30}
 		hovered := p.mx >= 0 && tx.rect_contains(br, p.mx, p.my) && has_unpinned
@@ -748,9 +748,9 @@ panel_draw :: proc(cb: ^Clipboard) {
 			tx.canvas_fill_circle(&lv, f32(view.w) / 2, f32(cy - 34), 38, th.surface)
 			append(&list, glyph_op(cb, p.icons_big, {0, cy - 72, view.w, 76}, glyph(GLYPH_CLIPBOARD), th.muted))
 		}
-		t1 := pt ? "Nada copiado ainda" : "Nothing copied yet"
-		t2 := pt ? "Textos e imagens que você copiar" : "Text and pictures you copy"
-		t3 := pt ? "aparecem aqui." : "show up here."
+		t1 := tr(cb, "Nada copiado ainda", "Nothing copied yet")
+		t2 := tr(cb, "Textos e imagens que você copiar", "Text and pictures you copy")
+		t3 := tr(cb, "aparecem aqui.", "show up here.")
 		w1 := tx.text_width(c, p.bold, t1)
 		append(&list, text_op(p.bold, (view.w - w1) / 2, cy + 16, 26, t1, th.foreground))
 		w2 := tx.text_width(c, p.font, t2)
@@ -813,17 +813,17 @@ panel_draw :: proc(cb: ^Clipboard) {
 				append(&list, glyph_op(cb, p.icons_small, {cx - 2, r.y, 22, ROW_H}, glyph(GLYPH_PHOTO), th.muted))
 				cx += 26
 			}
-			append(&list, text_op(p.small, cx, r.y, ROW_H, image_caption(it, pt), th.muted))
+			append(&list, text_op(p.small, cx, r.y, ROW_H, image_caption(it, comma), th.muted))
 			ensure_thumb(cb, it)
 			tw, tht := thumb_size(it.w, it.h, thumb_max_w(cb))
-			tr := tx.Rect{r.x + ITEM_PAD, r.y + ROW_H - 4, tw, tht}
+			thumb_r := tx.Rect{r.x + ITEM_PAD, r.y + ROW_H - 4, tw, tht}
 			if it.thumb_state == .Ready {
-				tx.canvas_blit_image(&lv, it.thumb, tr.x, tr.y)
-				round_corners(&lv, tr, THUMB_R, fill)
-				tx.canvas_stroke_rounded_rect(&lv, tr, THUMB_R, 1, tx.color_with_alpha(th.muted, 60))
+				tx.canvas_blit_image(&lv, it.thumb, thumb_r.x, thumb_r.y)
+				round_corners(&lv, thumb_r, THUMB_R, fill)
+				tx.canvas_stroke_rounded_rect(&lv, thumb_r, THUMB_R, 1, tx.color_with_alpha(th.muted, 60))
 			} else {
-				tx.canvas_fill_rounded_rect(&lv, tr, THUMB_R, tx.color_mix(fill, th.muted, 0.2))
-				if p.icons != nil { append(&list, glyph_op(cb, p.icons, tr, glyph(GLYPH_PHOTO), th.muted)) }
+				tx.canvas_fill_rounded_rect(&lv, thumb_r, THUMB_R, tx.color_mix(fill, th.muted, 0.2))
+				if p.icons != nil { append(&list, glyph_op(cb, p.icons, thumb_r, glyph(GLYPH_PHOTO), th.muted)) }
 			}
 		}
 

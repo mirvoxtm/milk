@@ -17,6 +17,7 @@ import "core:log"
 import "core:math"
 import "core:strings"
 import xlib "vendor:x11/xlib"
+import config "../config"
 import tx "../tx"
 
 @(private) PANEL_W       :: 380
@@ -437,7 +438,6 @@ panel_render :: proc(n: ^Notifier) {
 	c := n.c
 	th := &n.theme
 	f := &n.fonts
-	portugues := portuguese(n)
 	clear(&pn.hits)
 
 	// The notification card (window coordinates: the card is the window).
@@ -454,11 +454,10 @@ panel_render :: proc(n: ^Notifier) {
 	switch n.bus_state {
 	case .Serving:
 	case .Waiting:
-		who := n.owner_label != "" ? n.owner_label : (portugues ? "desconhecido" : "unknown")
-		notice = portugues ? fmt.tprintf("Outro serviço de notificações está ativo (%s)", who) \
-		                   : fmt.tprintf("Another notification service is running (%s)", who)
+		who := n.owner_label != "" ? n.owner_label : tr(n, "desconhecido", "unknown")
+		notice = fmt.tprintf(tr(n, "Outro serviço de notificações está ativo (%s)", "Another notification service is running (%s)"), who)
 	case .Unavailable:
-		notice = portugues ? "Serviço de notificações indisponível (sem D-Bus)" : "Notification service unavailable (no D-Bus)"
+		notice = tr(n, "Serviço de notificações indisponível (sem D-Bus)", "Notification service unavailable (no D-Bus)")
 	}
 	top_h: i32 = notice != "" ? PANEL_HEADER - 8 : PANEL_HEADER // title row
 	header_h := notice != "" ? top_h + 20 : top_h
@@ -469,8 +468,8 @@ panel_render :: proc(n: ^Notifier) {
 
 	// Header: title, do-not-disturb, clear all.
 	hy := card.y
-	layer_text_v(l, f.header, card.x + PANEL_PAD + 2, hy, top_h, portugues ? "Notificações" : "Notifications", th.foreground)
-	clear_label := portugues ? "Limpar tudo" : "Clear all"
+	layer_text_v(l, f.header, card.x + PANEL_PAD + 2, hy, top_h, tr(n, "Notificações", "Notifications"), th.foreground)
+	clear_label := tr(n, "Limpar tudo", "Clear all")
 	clear_w := tx.text_width(c, f.small, clear_label) + 24
 	clear_r := tx.Rect{card.x + card.w - PANEL_PAD - clear_w + 4, hy + (top_h - 30) / 2, clear_w, 30}
 	has_items := false
@@ -510,11 +509,11 @@ panel_render :: proc(n: ^Notifier) {
 		if f.big != nil {
 			layer_glyph(c, l, f.big, GLYPH_BELL_OFF, view.x + view.w / 2, mid - 10, th.muted)
 		}
-		empty := portugues ? "Sem notificações novas" : "No new notifications"
+		empty := tr(n, "Sem notificações novas", "No new notifications")
 		ew := tx.text_width(c, f.body, empty)
 		layer_text_v(l, f.body, view.x + (view.w - ew) / 2, mid + 26, 24, empty, th.secondary)
 		if n.dnd {
-			note := portugues ? "Não perturbe está ativado" : "Do not disturb is on"
+			note := tr(n, "Não perturbe está ativado", "Do not disturb is on")
 			nw := tx.text_width(c, f.small, note)
 			layer_text_v(l, f.small, view.x + (view.w - nw) / 2, mid + 50, 20, note, th.muted)
 		}
@@ -648,12 +647,6 @@ panel_draw_list :: proc(n: ^Notifier, p: ^Painter, groups: []Group, view: tx.Rec
 // ---------------------------------------------------------------------------
 // Calendar
 // ---------------------------------------------------------------------------
-@(private) WEEKDAYS_PT_FULL := [7]string{"domingo", "segunda-feira", "terça-feira", "quarta-feira", "quinta-feira", "sexta-feira", "sábado"}
-@(private) WEEKDAYS_EN_FULL := [7]string{"Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"}
-@(private) WEEKDAY_INITIALS_PT := [7]string{"D", "S", "T", "Q", "Q", "S", "S"}
-@(private) WEEKDAY_INITIALS_EN := [7]string{"Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"}
-@(private) MONTHS_PT_FULL := [12]string{"janeiro", "fevereiro", "março", "abril", "maio", "junho", "julho", "agosto", "setembro", "outubro", "novembro", "dezembro"}
-@(private) MONTHS_EN_FULL := [12]string{"January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"}
 
 @(private)
 days_in_month :: proc(year, month: int) -> int { // month 1..12
@@ -681,7 +674,7 @@ panel_draw_calendar :: proc(n: ^Notifier, l: Layer, cal: tx.Rect, cell_h: i32, h
 	c := n.c
 	th := &n.theme
 	f := &n.fonts
-	pt := portuguese(n)
+	lang := n.cfg.bar.language
 	today := local_tm(now_unix())
 	t_year, t_month, t_day := int(today.tm_year) + 1900, int(today.tm_mon) + 1, int(today.tm_mday)
 
@@ -689,8 +682,8 @@ panel_draw_calendar :: proc(n: ^Notifier, l: Layer, cal: tx.Rect, cell_h: i32, h
 	y := cal.y + PANEL_PAD - 2
 	title_h: i32 = f.title != nil ? f.title.height : 18
 	wday := int(today.tm_wday)
-	full := pt ? fmt.tprintf("%s, %d de %s", WEEKDAYS_PT_FULL[wday], t_day, MONTHS_PT_FULL[t_month - 1]) \
-	           : fmt.tprintf("%s, %s %d", WEEKDAYS_EN_FULL[wday], MONTHS_EN_FULL[t_month - 1], t_day)
+	full := lang == .English ? fmt.tprintf("%s, %s %d", config.WEEKDAYS_FULL[lang][wday], config.MONTHS_FULL[lang][t_month - 1], t_day) \
+	                         : fmt.tprintf("%s, %d de %s", config.WEEKDAYS_FULL[lang][wday], t_day, config.MONTHS_FULL[lang][t_month - 1])
 	layer_text_v(l, f.title, x0 + 2, y, title_h, full, th.foreground)
 	y += title_h + 14
 	tx.canvas_fill_rect(l.cv, {cal.x - l.ox, y - l.oy, cal.w, 1}, tx.color_with_alpha(th.muted, 60))
@@ -700,7 +693,7 @@ panel_draw_calendar :: proc(n: ^Notifier, l: Layer, cal: tx.Rect, cell_h: i32, h
 	m := t_month - 1 + pn.month_offset
 	year := t_year + int(math.floor(f64(m) / 12))
 	month := ((m % 12) + 12) % 12 + 1
-	label := pt ? fmt.tprintf("%s de %d", MONTHS_PT_FULL[month - 1], year) : fmt.tprintf("%s %d", MONTHS_EN_FULL[month - 1], year)
+	label := lang == .English ? fmt.tprintf("%s %d", config.MONTHS_FULL[lang][month - 1], year) : fmt.tprintf("%s de %d", config.MONTHS_FULL[lang][month - 1], year)
 	layer_text_v(l, f.body, x0 + 2, y, 30, label, th.foreground)
 	up := tx.Rect{cal.x + cal.w - PANEL_PAD - 64, y, 30, 30}
 	down := tx.Rect{cal.x + cal.w - PANEL_PAD - 30, y, 30, 30}
@@ -720,7 +713,7 @@ panel_draw_calendar :: proc(n: ^Notifier, l: Layer, cal: tx.Rect, cell_h: i32, h
 	grid_w := cal.w - 2 * PANEL_PAD
 	cell_w := grid_w / 7
 	gx := cal.x + (cal.w - cell_w * 7) / 2
-	initials := pt ? WEEKDAY_INITIALS_PT : WEEKDAY_INITIALS_EN
+	initials := config.WEEKDAY_INITIALS[lang]
 	for i in 0 ..< 7 {
 		s := initials[i]
 		w := tx.text_width(c, f.small, s)

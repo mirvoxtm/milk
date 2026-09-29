@@ -16,7 +16,6 @@ package clip
 import "base:runtime"
 import "core:log"
 import "core:path/filepath"
-import "core:strings"
 import xlib "vendor:x11/xlib"
 import tx "../tx"
 import config "../config"
@@ -392,4 +391,4 @@ schedule_save :: proc(cb: ^Clipboard) {
 }
 
 @(private)
-portuguese :: proc(cb: ^Clipboard) -> bool { return strings.has_prefix(cb.cfg.bar.locale, "pt") }
+tr :: proc(cb: ^Clipboard, pt, en: string) -> string { return config.tr(cb.cfg.bar.language, pt, en) }

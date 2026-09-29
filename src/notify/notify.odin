@@ -302,7 +302,7 @@ release_look :: proc(n: ^Notifier) {
 }
 
 @(private)
-portuguese :: proc(n: ^Notifier) -> bool { return strings.has_prefix(n.cfg.bar.locale, "pt") }
+tr :: proc(n: ^Notifier, pt, en: string) -> string { return config.tr(n.cfg.bar.language, pt, en) }
 
 // ---------------------------------------------------------------------------
 // Model
@@ -482,7 +482,7 @@ visible_actions :: proc(notif: ^Notification, allocator := context.temp_allocato
 display_app_name :: proc(n: ^Notifier, notif: ^Notification) -> string {
 	if notif.app_name != "" { return notif.app_name }
 	if notif.desktop_entry != "" { return notif.desktop_entry }
-	return portuguese(n) ? "Notificação" : "Notification"
+	return tr(n, "Notificação", "Notification")
 }
 
 // ---------------------------------------------------------------------------

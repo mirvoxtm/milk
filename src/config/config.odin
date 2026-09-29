@@ -92,7 +92,8 @@ Bar_Options :: struct {
 	launcher_icon:         string,   // image path (svg/png) or "" for a glyph
 	date_format:           string,   // strftime subset: %a %d %b %m %Y %H %M
 	clock_format:          string,
-	locale:                string,   // "pt-BR" | "en"
+	locale:                string,   // "auto" (the system language) | "pt-BR" | "en" | "es"
+	language:              Language, // resolved from locale when the file is read
 	media_idle_text:       string,
 	title_max_width:       int,
 	show_empty_workspaces: bool,
@@ -108,10 +109,23 @@ THEME_VARIANTS :: []string{"light", "dark"}
 
 // Colour theme of the whole suite (bar, panels, toast, borders, terminal).
 Appearance_Options :: struct {
-	theme:           string, // a THEME_PRESETS name
-	variant:         string, // light | dark
-	animation_scale: f64,    // multiplies every UI/window animation duration: 0 = off, 0.5 = twice as fast, 1 = normal
+	theme:           string,         // a THEME_PRESETS name or the name of one of custom_themes
+	variant:         string,         // light | dark
+	animation_scale: f64,            // multiplies every UI/window animation duration: 0 = off, 0.5 = twice as fast, 1 = normal
+	custom_themes:   []Custom_Theme, // appearance.customThemes, sorted by name
 }
+
+// A theme made by the user in the settings app:
+//     "customThemes": { "Meu tema": { "variant": "dark", "background": "#1E1E2E", ... } }
+// with the colour keys of bar.theme plus borderColor and focusColor (#RRGGBB);
+// missing colours come from the milk preset of the same variant.
+Custom_Theme :: struct {
+	name:   string,
+	dark:   bool,
+	colors: Theme_Colors, // owned strings
+}
+
+CUSTOM_THEME_NAME_MAX :: 40 // bytes
 
 // Duration of an animation of `seconds` at the configured speed (0 = no animation).
 anim_duration :: proc(cfg: ^Config, seconds: f64) -> f64 {
@@ -198,6 +212,45 @@ theme_preset :: proc(name, variant: string) -> Theme_Colors {
 		if p.name == name { return variant == "dark" ? p.dark : p.light }
 	}
 	return THEME_PRESETS[0].light
+}
+
+// The user's theme called `name`, if there is one.
+custom_theme :: proc(cfg: ^Config, name: string) -> (^Custom_Theme, bool) {
+	if cfg == nil { return nil, false }
+	for &t in cfg.appearance.custom_themes {
+		if t.name == name { return &t, true }
+	}
+	return nil, false
+}
+
+// Colours of the configured theme (appearance.theme/variant), preset or custom.
+current_theme_colors :: proc(cfg: ^Config) -> (colors: Theme_Colors, dark: bool) {
+	if t, ok := custom_theme(cfg, cfg.appearance.theme); ok { return t.colors, t.dark }
+	dark = cfg.appearance.variant == "dark"
+	return theme_preset(cfg.appearance.theme, cfg.appearance.variant), dark
+}
+
+// "#RRGGBB".
+is_hex_color :: proc(s: string) -> bool {
+	if len(s) != 7 || s[0] != '#' { return false }
+	for ch in s[1:] {
+		switch ch {
+		case '0' ..= '9', 'a' ..= 'f', 'A' ..= 'F':
+		case: return false
+		}
+	}
+	return true
+}
+
+// A usable custom theme name: 1..CUSTOM_THEME_NAME_MAX bytes, no surrounding
+// spaces or control characters, and not the name of a built-in theme.
+valid_custom_theme_name :: proc(name: string) -> bool {
+	if name == "" || len(name) > CUSTOM_THEME_NAME_MAX || strings.trim_space(name) != name { return false }
+	for r in name { if r < 0x20 || r == 0x7f { return false } }
+	for p in THEME_PRESETS {
+		if strings.equal_fold(p.name, name) || strings.equal_fold(p.title, name) { return false }
+	}
+	return true
 }
 
 WM_MOD_KEYS :: []string{"super", "alt"}
@@ -291,8 +344,9 @@ default_bar :: proc() -> Bar_Options {
 	b.launcher_icon = "" // "" = milk's own logo; or an image path
 	b.date_format = "%a %d %b"
 	b.clock_format = "%H:%M"
-	b.locale = "pt-BR"
-	b.media_idle_text = "Nada Reproduzindo"
+	b.locale = "auto"
+	b.language = resolve_language(b.locale)
+	b.media_idle_text = "" // "" = "Nada Reproduzindo" / "Nothing playing" / … in milk's language
 	b.title_max_width = 320
 	b.show_empty_workspaces = true
 	b.spacing = 14
@@ -526,6 +580,7 @@ parse_bar :: proc(l: ^Loader, root: json.Object, out: ^Bar_Options) -> bool {
 	out.date_format = get_string(l, section, "dateFormat", "bar", d.date_format) or_return
 	out.clock_format = get_string(l, section, "clockFormat", "bar", d.clock_format) or_return
 	out.locale = get_string(l, section, "locale", "bar", d.locale) or_return
+	out.language = resolve_language(out.locale)
 	out.media_idle_text = get_string(l, section, "mediaIdleText", "bar", d.media_idle_text) or_return
 	tw := get_number(l, section, "titleMaxWidth", "bar", f64(d.title_max_width), 40) or_return
 	out.title_max_width = int(tw)
@@ -622,9 +677,11 @@ parse_wm :: proc(l: ^Loader, root: json.Object, out: ^WM_Options) -> bool {
 @(private)
 parse_extras :: proc(l: ^Loader, root: json.Object, cfg: ^Config) -> bool {
 	ap := get_object(l, root, "appearance", "milk.json") or_return
-	reject_unknown(l, ap, {"theme", "variant", "animationScale"}, "appearance") or_return
+	reject_unknown(l, ap, {"theme", "variant", "animationScale", "customThemes"}, "appearance") or_return
+	parse_custom_themes(l, ap, cfg) or_return
 	names := make([dynamic]string, context.temp_allocator)
 	for p in THEME_PRESETS { append(&names, p.name) }
+	for t in cfg.appearance.custom_themes { append(&names, t.name) }
 	cfg.appearance.theme = get_choice(l, ap, "theme", "appearance", "milk", names[:]) or_return
 	cfg.appearance.variant = get_choice(l, ap, "variant", "appearance", "light", THEME_VARIANTS) or_return
 	cfg.appearance.animation_scale = get_number(l, ap, "animationScale", "appearance", 0.7, 0, 3) or_return
@@ -658,6 +715,69 @@ parse_extras :: proc(l: ^Loader, root: json.Object, cfg: ^Config) -> bool {
 	cfg.keyboard.model = get_string(l, kb, "model", "keyboard", "", true) or_return
 	cfg.keyboard.options = get_string(l, kb, "options", "keyboard", "", true) or_return
 	return true
+}
+
+@(private)
+get_color :: proc(l: ^Loader, obj: json.Object, key, scope: string, default_value: string) -> (string, bool) {
+	s, ok := get_string(l, obj, key, scope, default_value)
+	if !ok { return "", false }
+	if !is_hex_color(s) {
+		delete(s)
+		return "", fail(l, "%s.%s must be a colour written as #RRGGBB.", scope, key)
+	}
+	return s, true
+}
+
+// appearance.customThemes: stored in cfg.appearance.custom_themes as they are
+// parsed (so destroy() frees them after an error too), then sorted by name.
+@(private)
+parse_custom_themes :: proc(l: ^Loader, ap: json.Object, cfg: ^Config) -> bool {
+	obj := get_object(l, ap, "customThemes", "appearance") or_return
+	list := make([]Custom_Theme, len(obj))
+	cfg.appearance.custom_themes = list[:0]
+	n := 0
+	for name, v in obj {
+		scope := fmt.tprintf("appearance.customThemes.%s", name)
+		if !valid_custom_theme_name(name) {
+			return fail(l, "%s: a theme name must have 1 to %d characters, no leading or trailing spaces, and must not be a built-in theme name.",
+			            scope, CUSTOM_THEME_NAME_MAX)
+		}
+		t, is_obj := v.(json.Object)
+		if !is_obj { return fail(l, "%s must be an object.", scope) }
+		reject_unknown(l, t, {"variant", "background", "foreground", "muted", "accent", "accentForeground", "surface", "warning",
+		                      "borderColor", "focusColor"}, scope) or_return
+		variant := get_choice(l, t, "variant", scope, "light", THEME_VARIANTS) or_return
+		ct := &list[n]
+		ct.dark = variant == "dark"
+		delete(variant)
+		ct.name = strings.clone(name)
+		n += 1
+		cfg.appearance.custom_themes = list[:n]
+		base := theme_preset("milk", ct.dark ? "dark" : "light")
+		c := &ct.colors
+		c.bar.background = get_color(l, t, "background", scope, base.bar.background) or_return
+		c.bar.foreground = get_color(l, t, "foreground", scope, base.bar.foreground) or_return
+		c.bar.muted = get_color(l, t, "muted", scope, base.bar.muted) or_return
+		c.bar.accent = get_color(l, t, "accent", scope, base.bar.accent) or_return
+		c.bar.accent_foreground = get_color(l, t, "accentForeground", scope, base.bar.accent_foreground) or_return
+		c.bar.surface = get_color(l, t, "surface", scope, base.bar.surface) or_return
+		c.bar.warning = get_color(l, t, "warning", scope, base.bar.warning) or_return
+		c.border_color = get_color(l, t, "borderColor", scope, base.border_color) or_return
+		c.focus_color = get_color(l, t, "focusColor", scope, base.focus_color) or_return
+	}
+	// Map order is arbitrary: keep the themes sorted by name.
+	themes := cfg.appearance.custom_themes
+	for i in 1 ..< len(themes) {
+		for j := i; j > 0 && themes[j].name < themes[j - 1].name; j -= 1 { themes[j], themes[j - 1] = themes[j - 1], themes[j] }
+	}
+	return true
+}
+
+@(private)
+destroy_theme_colors :: proc(c: ^Theme_Colors) {
+	delete(c.bar.background); delete(c.bar.foreground); delete(c.bar.muted); delete(c.bar.accent)
+	delete(c.bar.accent_foreground); delete(c.bar.surface); delete(c.bar.warning)
+	delete(c.border_color); delete(c.focus_color)
 }
 
 // Load and validate milk.json. `err` is "" on success.
@@ -771,6 +891,11 @@ destroy :: proc(cfg: ^Config) {
 	delete(b.launcher_icon); delete(b.date_format); delete(b.clock_format); delete(b.locale); delete(b.media_idle_text)
 	delete(b.style)
 	delete(cfg.appearance.theme); delete(cfg.appearance.variant); delete(cfg.notifications.position)
+	for &t in cfg.appearance.custom_themes {
+		delete(t.name)
+		destroy_theme_colors(&t.colors)
+	}
+	delete(cfg.appearance.custom_themes)
 	delete(cfg.keyboard.layout); delete(cfg.keyboard.variant); delete(cfg.keyboard.model); delete(cfg.keyboard.options)
 	w := &cfg.wm
 	delete(w.mod_key); delete(w.terminal); delete(w.launcher); delete(w.border_color); delete(w.focus_color); delete(w.screenshot)
