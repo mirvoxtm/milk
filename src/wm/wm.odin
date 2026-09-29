@@ -81,6 +81,17 @@ Manager :: struct {
 	owned_cmds:    [dynamic]string,      // command strings built for key bindings
 	reserved:      Reservation,
 	ewmh:          Ewmh_Cache,
+	cm:            Compositor_Watch, // see compositor.odin
+}
+
+// The compositor selection as the window manager follows it (compositor.odin).
+Compositor_Watch :: struct {
+	watching:       bool,
+	event_base:     i32,
+	selection:      xlib.Atom,
+	corners_atom:   xlib.Atom,
+	owner:          xlib.Window,
+	rounds_corners: bool, // lactase draws the corners: no SHAPE on the windows
 }
 
 // Set by the error handler installed while checking for another window manager.
@@ -211,6 +222,7 @@ start :: proc(m: ^Manager) {
 	if xlib.GetWindowAttributes(m.dpy, m.root, &attrs) != 0 { wa.event_mask += attrs.your_event_mask }
 	xlib.ChangeWindowAttributes(m.dpy, m.root, {.CWEventMask, .CWCursor}, &wa)
 	grabkeys(m)
+	compositor_watch(m)
 	m.started = true
 	focus(m, nil)
 	scan(m)
@@ -226,6 +238,7 @@ start :: proc(m: ^Manager) {
 handle_event :: proc(m: ^Manager, ev: ^xlib.XEvent) -> bool {
 	if m == nil || !m.started || ev == nil { return false }
 	context.allocator = m.allocator
+	if compositor_event(m, ev) { return true }
 	consumed := false
 	#partial switch ev.type {
 	case .ButtonPress:      consumed = buttonpress(m, ev)

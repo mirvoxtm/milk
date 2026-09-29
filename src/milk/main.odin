@@ -384,6 +384,8 @@ Runner :: struct {
 	notes:   ^notify.Notifier,
 	clips:   ^clip.Clipboard,
 	wake_fd: posix.FD,
+	compositor_on:    bool,                // lactase was asked to run (compositor.enabled)
+	lactase_children: [dynamic]posix.pid_t, // lactase launchers not reaped yet
 }
 
 // The strip the bar occupies on its monitor, which the window manager must keep free.
@@ -542,6 +544,8 @@ run :: proc(opts: ^Options, cfg: ^config.Config) -> int {
 	desktop.start(daemon)
 	if r.notes != nil { notify.start(r.notes) }
 	if r.clips != nil { clip.start(r.clips) }
+	compositor_sync(&r)
+	defer delete(r.lactase_children)
 	loop(&r)
 	log.info("milk stopped")
 	return 0
@@ -587,6 +591,7 @@ loop :: proc(r: ^Runner) {
 			reload(r)
 		}
 		now := tx.now()
+		compositor_reap(r)
 		if r.manager != nil { wm.tick(r.manager, now) }
 		desktop.tick(r.daemon, now)
 		if r.bar != nil { bar.tick(r.bar, now) }
@@ -675,6 +680,7 @@ reload :: proc(r: ^Runner) {
 	if r.clips != nil { clip.reload(r.clips, cfg) }
 	apply_keyboard(cfg)
 	write_rofi_theme(cfg)
+	compositor_sync(r)
 	config.destroy(old)
 	log.info("Configuration reloaded")
 }

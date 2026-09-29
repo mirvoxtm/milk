@@ -23,7 +23,7 @@ import tx "../tx"
 @(private) NOTICE_TIME :: 2.2
 
 @(private)
-Section :: enum { Appearance, Wallpapers, Bar, Windows, Shortcuts, Keyboard, Notifications, Clipboard, Areas, About }
+Section :: enum { Appearance, Wallpapers, Bar, Windows, Effects, Shortcuts, Keyboard, Notifications, Clipboard, Areas, About }
 
 // What a change touched (decides which keys are written and how soon).
 @(private)
@@ -37,6 +37,7 @@ Control :: enum {
 	Wm_Gaps, Wm_Border, Wm_Master, Wm_Animation, Wm_Focus_Follows, Wm_Corners,
 	Notif_Enabled, Notif_Dnd, Notif_Timeout, Notif_Position,
 	Clip_Enabled, Clip_Persist, Clip_Max,
+	Fx_Enabled,
 	Area_Name, // + area index
 	Sc_Command, Sc_Site, Sc_Search,
 }
@@ -67,6 +68,9 @@ Settings :: struct {
 	clip_enabled:   bool,
 	clip_persist:   bool,
 	clip_max:       int,
+	fx_enabled:     bool,                 // compositor.enabled (lactase; see compositor.odin)
+	fx_poll:        f64,
+	fx_children:    [dynamic]posix.pid_t, // lactase settings apps not reaped yet
 	names:          [dynamic][dynamic]u8,
 	sc:             Shortcuts,
 	text_target:    int, // Text_Field argument of the focused field
@@ -140,6 +144,7 @@ settings_load_values :: proc(w: ^Wizard) {
 	s.clip_enabled = cfg.clipboard.enabled
 	s.clip_persist = cfg.clipboard.persist
 	s.clip_max = cfg.clipboard.max_items
+	s.fx_enabled = cfg.compositor.enabled
 	for n in w.areas {
 		name: [dynamic]u8
 		if ws, ok := cfg.workspaces[n]; ok { append(&name, ..transmute([]u8)ws.name) }
@@ -152,6 +157,7 @@ settings_destroy :: proc(w: ^Wizard) {
 	s := &w.set
 	delete(s.date_format)
 	delete(s.clock_format)
+	delete(s.fx_children)
 	for n in s.names { delete(n) }
 	delete(s.names)
 	clear_edits(w)
@@ -255,6 +261,8 @@ section_info :: proc(w: ^Wizard, s: Section) -> (icon: Icon, title, desc: string
 		return .Photo, tr(w, "Papéis de parede", "Wallpapers"), tr(w, "Uma imagem para todas as áreas ou uma para cada área.", "One image for every area or one per area.")
 	case .Bar:
 		return .Layout_Top, tr(w, "Barra", "Bar"), tr(w, "Posição, estilo, tamanho e formatos de data e hora.", "Position, style, size and date/time formats.")
+	case .Effects:
+		return .Sparkles, tr(w, "Efeitos", "Effects"), tr(w, "Sombras, animações e transparência com o lactase, o compositor do milk.", "Shadows, animations and transparency with lactase, milk's compositor.")
 	case .Windows:
 		return .App_Window, tr(w, "Janelas", "Windows"), tr(w, "Espaçamento, bordas e animações. As cores das bordas seguem o tema.", "Gaps, borders and animations. Border colours follow the theme.")
 	case .Shortcuts:
@@ -301,6 +309,8 @@ draw_settings :: proc(w: ^Wizard, cv: ^tx.Canvas) {
 	case .Windows:
 		ry := c.y
 		rows_windows(w, cv, c, &ry)
+	case .Effects:
+		draw_effects_page(w, cv, c)
 	case .Shortcuts:
 		draw_shortcuts(w, cv, c)
 	case .Keyboard:
@@ -615,6 +625,8 @@ settings_action :: proc(w: ^Wizard, action: Action, arg: int) {
 		path := join_path({w.runtime_root, MARKER_NAME})
 		if os.exists(path) { _ = os.remove(path) }
 		show_notice(w, tr(w, "O assistente abrirá no próximo início", "The wizard will open next time"))
+	case .Fx_Open:
+		open_lactase_settings(w)
 	case .Open_Config:
 		desc := os.Process_Desc{command = {"xdg-open", w.config_path}}
 		if p, err := os.process_start(desc); err == nil {
@@ -688,6 +700,9 @@ toggle_control :: proc(w: ^Wizard, ctrl: Control) {
 	case .Clip_Persist:
 		s.clip_persist = !s.clip_persist
 		set_edit(w, "clipboard.persist", json.Boolean(s.clip_persist))
+	case .Fx_Enabled:
+		s.fx_enabled = !s.fx_enabled
+		set_edit(w, "compositor.enabled", json.Boolean(s.fx_enabled))
 	case:
 		return
 	}
@@ -837,6 +852,7 @@ settings_tick :: proc(w: ^Wizard, now: f64) {
 		s.notice = ""
 		w.dirty = true
 	}
+	effects_tick(w, now)
 }
 
 @(private)
@@ -849,6 +865,7 @@ settings_timeout :: proc(w: ^Wizard, now: f64) -> f64 {
 		n := max(s.notice_until - now, 0)
 		if t < 0 || n < t { t = n }
 	}
+	if ft := effects_timeout(w, now); ft >= 0 && (t < 0 || ft < t) { t = ft }
 	return t
 }
 

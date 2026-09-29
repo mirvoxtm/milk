@@ -48,7 +48,7 @@ Action :: enum {
 	Wp_Mode, Wp_Area, Wp_Tile,
 	Bar_Choice,
 	// Settings app
-	Section, Step, Toggle, Choice, Text_Field, Rerun_Wizard, Open_Config,
+	Section, Step, Toggle, Choice, Text_Field, Rerun_Wizard, Open_Config, Fx_Open,
 	Sc_Add, Sc_Edit, Sc_Delete, Sc_Capture, Sc_Kind, Sc_App, Sc_Save, Sc_Cancel, Sc_Builtin,
 }
 
@@ -548,7 +548,7 @@ do_action :: proc(w: ^Wizard, action: Action, arg: int) {
 		w.bar_floating = arg % 2 == 1
 		w.dirty = true
 		settings_changed(w, .Bar_Layout)
-	case .Section, .Step, .Toggle, .Choice, .Text_Field, .Rerun_Wizard, .Open_Config:
+	case .Section, .Step, .Toggle, .Choice, .Text_Field, .Rerun_Wizard, .Open_Config, .Fx_Open:
 		settings_action(w, action, arg)
 	case .Sc_Add, .Sc_Edit, .Sc_Delete, .Sc_Capture, .Sc_Kind, .Sc_App, .Sc_Save, .Sc_Cancel, .Sc_Builtin:
 		shortcuts_action(w, action, arg)

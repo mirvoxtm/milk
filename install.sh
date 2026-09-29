@@ -3,7 +3,8 @@
 #
 # Interactive by default: it asks which parts to install, shows the plan and
 # waits for your confirmation. It installs every dependency with pacman, milk
-# itself, Spoil (the file manager, Super+E) next to milk, the Tabler icon font
+# itself, Spoil (the file manager, Super+E) and lactase (the compositor) next
+# to milk, the Tabler icon font
 # when Noctalia's copy is missing, the Alacritty theme and the login-screen
 # entry.
 #
@@ -11,6 +12,7 @@
 #   ./install.sh --yes           accept every default without asking
 #   ./install.sh --minimal       skip the optional tools
 #   ./install.sh --no-spoil      do not install Spoil
+#   ./install.sh --no-lactase    do not install lactase (shadows, animations, transparency)
 #   ./install.sh --with-sddm     also install and enable SDDM when no display manager is enabled
 #   ./install.sh --uninstall     remove the session entry, the commands and the icon font
 #
@@ -20,18 +22,20 @@ set -euo pipefail
 
 MILK_URL="https://github.com/mirvoxtm/milk.git"
 SPOIL_URL="https://github.com/mirvoxtm/spoil.git"
+LACTASE_URL="https://github.com/mirvoxtm/lactase.git"
 TABLER_VERSION="3.48.0"
 TABLER_URL="https://registry.npmjs.org/@tabler/icons-webfont/-/icons-webfont-${TABLER_VERSION}.tgz"
 NOCTALIA_FONT="/usr/share/noctalia/assets/fonts/noctalia-tabler.ttf"
 DATA_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/milk"
 FONT_DIR="$DATA_DIR/fonts"
 
-assume_yes=0; minimal=0; want_spoil=1; with_sddm=0; uninstall=0
+assume_yes=0; minimal=0; want_spoil=1; want_lactase=1; with_sddm=0; uninstall=0
 for arg in "$@"; do
     case "$arg" in
         --yes|-y)    assume_yes=1 ;;
         --minimal)   minimal=1 ;;
         --no-spoil)  want_spoil=0 ;;
+        --no-lactase) want_lactase=0 ;;
         --with-sddm) with_sddm=1 ;;
         --uninstall) uninstall=1 ;;
         -h|--help)   sed -n '2,/^set /{/^#/s/^# \{0,1\}//p}' "$0"; exit 0 ;;
@@ -45,7 +49,7 @@ if [ -t 1 ]; then
 else
     B=; D=; G=; Y=; R=; C=; N=
 fi
-step_no=0; step_total=7
+step_no=0; step_total=8
 step() { step_no=$((step_no + 1)); printf '\n%s[%d/%d]%s %s%s%s\n' "$C" "$step_no" "$step_total" "$N" "$B" "$*" "$N"; }
 ok()   { printf '  %s✓%s %s\n' "$G" "$N" "$*"; }
 info() { printf '  %s•%s %s\n' "$D" "$N" "$*"; }
@@ -93,12 +97,13 @@ else
     exec bash "$DATA_DIR/milk/install.sh" "$@"
 fi
 SPOIL="$(dirname "$MILK")/spoil"
+LACTASE="$(dirname "$MILK")/lactase"
 
 if [ "$uninstall" -eq 1 ]; then
     printf '%sRemoving milk%s (settings, runtime data and the clones stay in place)\n' "$B" "$N"
-    ask "Remove the login entry, the milk/spoil commands and the icon font?" y || exit 0
+    ask "Remove the login entry, the milk/spoil/lactase commands and the icon font?" y || exit 0
     sudo "$MILK/contrib/install-sddm-session.sh" --uninstall || true
-    rm -f "$HOME/.local/bin/milk" "$HOME/.local/bin/spoil"
+    rm -f "$HOME/.local/bin/milk" "$HOME/.local/bin/spoil" "$HOME/.local/bin/lactase"
     rm -rf "$FONT_DIR"
     fc-cache -f >/dev/null 2>&1 || true
     ok "Done."
@@ -118,6 +123,9 @@ if [ "$interactive" -eq 1 ]; then
     printf '%sWhat should be installed?%s\n' "$B" "$N"
     if [ "$want_spoil" -eq 1 ]; then
         ask "Spoil, the file manager (Super+E), with previews, thumbnails and archives?" y || want_spoil=0
+    fi
+    if [ "$want_lactase" -eq 1 ]; then
+        ask "lactase, the compositor (shadows, animations, transparency, blur, smooth corners)?" y || want_lactase=0
     fi
     if [ "$minimal" -eq 0 ]; then
         ask "Optional tools (Alacritty, rofi, screenshots, brightness keys, media player info)?" y || minimal=1
@@ -147,6 +155,9 @@ spoil_pkgs=(
     libarchive zip unzip 7zip                      # compress / extract
     alacritty                                      # the embedded terminal
 )
+lactase_pkgs=(
+    libxcomposite libxdamage libxrender mesa libglvnd  # compositing and OpenGL
+)
 optional=(
     alacritty rofi                                 # default terminal and launcher
     brightnessctl playerctl                        # brightness keys, media widget
@@ -156,6 +167,7 @@ optional=(
 )
 packages=("${required[@]}")
 [ "$want_spoil" -eq 1 ] && packages+=("${spoil_pkgs[@]}")
+[ "$want_lactase" -eq 1 ] && packages+=("${lactase_pkgs[@]}")
 [ "$minimal" -eq 0 ] && packages+=("${optional[@]}")
 [ "$with_sddm" -eq 1 ] && packages+=(sddm)
 # Drop duplicates and packages this repository does not provide (e.g. 7zip vs p7zip).
@@ -173,7 +185,7 @@ done
 mapfile -t missing < <(pacman -T "${available[@]}" || true)
 
 printf '\n%sPlan%s\n' "$B" "$N"
-info "milk$( [ "$want_spoil" -eq 1 ] && printf ' + Spoil' ) from $MILK$( [ "$want_spoil" -eq 1 ] && printf ' (Spoil next to it: %s)' "$SPOIL" )"
+info "milk$( [ "$want_spoil" -eq 1 ] && printf ' + Spoil' )$( [ "$want_lactase" -eq 1 ] && printf ' + lactase' ) from $MILK$( [ "$want_spoil" -eq 1 ] && printf ' (Spoil next to it: %s)' "$SPOIL" )"
 if [ ${#missing[@]} -eq 0 ]; then
     info "all ${#available[@]} packages are already installed"
 else
@@ -272,9 +284,27 @@ if [ "$want_spoil" -eq 1 ]; then
 else
     info "skipped"
 fi
-case ":$PATH:" in *":$HOME/.local/bin:"*) ;; *) warn "~/.local/bin is not in your PATH; add it to use the milk and spoil commands";; esac
 
-# --- 6. terminal theme --------------------------------------------------------------------------
+# --- 6. lactase ---------------------------------------------------------------------------------
+step "lactase"
+if [ "$want_lactase" -eq 1 ]; then
+    if [ ! -d "$LACTASE" ]; then
+        info "cloning $LACTASE_URL into $LACTASE"
+        git clone --depth 1 "$LACTASE_URL" "$LACTASE" || warn "Could not clone lactase; milk runs without a compositor"
+    elif [ -d "$LACTASE/.git" ]; then
+        git -C "$LACTASE" pull --ff-only >/dev/null 2>&1 || warn "Could not update lactase (local changes?); building what is there"
+    fi
+    if [ -x "$LACTASE/build.sh" ]; then
+        MILK_SRC="$MILK/src" "$LACTASE/build.sh" | sed 's/^/  /'
+        ln -sfn "$LACTASE/lactase" "$HOME/.local/bin/lactase"
+        ok "Command: lactase (milk starts it; settings under Efeitos)"
+    fi
+else
+    info "skipped"
+fi
+case ":$PATH:" in *":$HOME/.local/bin:"*) ;; *) warn "~/.local/bin is not in your PATH; add it to use the milk, spoil and lactase commands";; esac
+
+# --- 7. terminal theme --------------------------------------------------------------------------
 step "Terminal theme"
 alacritty_dir="${XDG_CONFIG_HOME:-$HOME/.config}/alacritty"
 if [ ! -f "$alacritty_dir/milk.toml" ]; then
@@ -287,7 +317,7 @@ else
     ok "Alacritty already themed for milk"
 fi
 
-# --- 7. login screen ------------------------------------------------------------------------------
+# --- 8. login screen ------------------------------------------------------------------------------
 step "Login screen"
 sudo "$MILK/contrib/install-sddm-session.sh" | sed 's/^/  /'
 

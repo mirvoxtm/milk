@@ -17,7 +17,9 @@ cd milk
 ```
 
 The installer asks what you want, installs every dependency and also sets up
-[Spoil](https://github.com/mirvoxtm/spoil), the file manager (Super+E), next to milk.
+[Spoil](https://github.com/mirvoxtm/spoil), the file manager (Super+E), and
+[lactase](https://github.com/mirvoxtm/lactase), the compositor (shadows, animations, transparency,
+blur and smooth corners), next to milk.
 `./install.sh --yes` takes the defaults without asking.
 
 Then log out and pick milk on the login screen. The first start walks you through the theme,
@@ -37,5 +39,6 @@ User simplicity is the absolute priority for milk - I mean, have you ever seen a
 - [dwm](https://dwm.suckless.org), by the suckless.org community: milk's window manager is mainly based upon a port of dwm 6.5 to Odin, released under the MIT/X Consortium License.
 - [Noctalia](https://github.com/noctalia-dev/noctalia-shell), whose bar inspired the layout and look of milk's bar.
 - [MangoWC](https://github.com/DreamMaoMao/mangowc), an inspiration for the animation in the window manager.
+- [picom](https://github.com/yshui/picom), the model for lactase, milk's compositor.
 - [Temenos](https://github.com/EmbargoTM/Temenos), by EmbargoTM, for the original idea of giving each workspace its own identity.
 - [Tabler Icons](https://tabler.io/icons) (MIT), the icon font used across the bar and panels.

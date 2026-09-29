@@ -138,6 +138,12 @@ Clipboard_Options :: struct {
 
 NOTIFICATION_POSITIONS :: []string{"top-right", "bottom-right"}
 
+// lactase, milk's compositor (shadows, fades, transparency, blur, smooth
+// corners). Its own settings live in lactase.json; milk only starts it.
+Compositor_Options :: struct {
+	enabled: bool, // run lactase with milk when it is installed (next to milk or on $PATH)
+}
+
 // Keyboard (applied with setxkbmap when milk starts; "" keeps the X server's setting).
 Keyboard_Options :: struct {
 	layout:  string, // xkb layouts, comma separated: "br", "us,br"
@@ -241,6 +247,7 @@ Config :: struct {
 	notifications: Notification_Options,
 	clipboard:     Clipboard_Options,
 	keyboard:      Keyboard_Options,
+	compositor:    Compositor_Options,
 	allocator:  runtime_allocator,
 }
 
@@ -639,6 +646,10 @@ parse_extras :: proc(l: ^Loader, root: json.Object, cfg: ^Config) -> bool {
 	mb := get_number(l, cb, "maxImageBytes", "clipboard", 16 * 1024 * 1024, 0, 256 * 1024 * 1024) or_return
 	cfg.clipboard.max_image_bytes = int(mb)
 	cfg.clipboard.persist = get_bool(l, cb, "persist", "clipboard", true) or_return
+
+	co := get_object(l, root, "compositor", "milk.json") or_return
+	reject_unknown(l, co, {"enabled"}, "compositor") or_return
+	cfg.compositor.enabled = get_bool(l, co, "enabled", "compositor", true) or_return
 
 	kb := get_object(l, root, "keyboard", "milk.json") or_return
 	reject_unknown(l, kb, {"layout", "variant", "model", "options"}, "keyboard") or_return

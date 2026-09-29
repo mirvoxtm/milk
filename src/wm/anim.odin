@@ -33,9 +33,10 @@ anim_sync_display :: proc(m: ^Manager, c: ^Client) {
 // included, with the SHAPE extension: no compositor needed, and the corners
 // show whatever is really behind the window. Fullscreen windows, docks,
 // desktops and popups (tooltips, notifications of other apps) stay square.
+// While lactase rounds the corners (anti-aliased) the windows stay rectangular.
 apply_corners :: proc(m: ^Manager, c: ^Client) {
 	r := m.settings.corner_radius
-	want := r > 0 && !c.isfullscreen && c.kind != .Dock && c.kind != .Desktop && c.kind != .Popup
+	want := r > 0 && !m.cm.rounds_corners && !c.isfullscreen && c.kind != .Dock && c.kind != .Desktop && c.kind != .Popup
 	if !want {
 		if c.shaped {
 			tx.shape_reset(m.c, c.win)
