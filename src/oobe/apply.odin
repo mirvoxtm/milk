@@ -20,6 +20,7 @@ write_marker :: proc(w: ^Wizard) {
 	if err := os.write_entire_file(path, stamp); err != nil {
 		log.errorf("Setup: cannot create %s: %v", path, err)
 	}
+	if pending := pending_path(w.config_path); os.exists(pending) { _ = os.remove(pending) }
 }
 
 // A child object (a fresh one when missing); store it back with root[key] = ...

@@ -20,10 +20,12 @@ The installer asks what you want, installs every dependency and also sets up
 [Spoil](https://github.com/mirvoxtm/spoil), the file manager (Super+E), and
 [lactase](https://github.com/mirvoxtm/lactase), the compositor (shadows, animations, transparency,
 blur and smooth corners), next to milk.
-`./install.sh --yes` takes the defaults without asking.
+`./install.sh --yes` takes the defaults without asking. Running it again reinstalls milk over the
+existing installation (your settings stay).
 
-Then log out and pick milk on the login screen. The first start walks you through the language, theme,
-keyboard, wallpapers and bar. Change anything later with `milk settings`. It's as simple as that.
+Then log out and pick milk on the login screen. After every installation the setup walks you through
+the language, theme, keyboard, wallpapers and bar (right away when you run the installer inside milk).
+Change anything later with `milk settings`. It's as simple as that.
 Your settings live in `~/.config/milk/milk.json`.
 
 Updating from a version that kept `milk.json` inside the clone: if `git pull` refuses because of it,

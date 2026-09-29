@@ -5,9 +5,11 @@
 # shows the plan and waits for your confirmation. It installs every dependency
 # with pacman, milk itself, Spoil (the file manager, Super+E) and lactase (the
 # compositor) next to milk, the Tabler icon font when Noctalia's copy is
-# missing, the Alacritty theme and the login-screen entry.
+# missing, the Alacritty theme and the login-screen entry. Run over an existing
+# installation it reinstalls everything (your settings stay), and the setup
+# wizard always opens afterwards.
 #
-#   ./install.sh                 interactive install / update
+#   ./install.sh                 interactive install / reinstall
 #   ./install.sh --lang es       language of the installer and of milk: pt, en or es
 #   ./install.sh --yes           accept every default without asking
 #   ./install.sh --minimal       skip the optional tools
@@ -164,6 +166,17 @@ else
 fi
 SPOIL="$(dirname "$MILK")/spoil"
 LACTASE="$(dirname "$MILK")/lactase"
+config_dir="${XDG_CONFIG_HOME:-$HOME/.config}/milk"
+config="$config_dir/milk.json"
+
+# An earlier installation: the clone the last session started from, the command
+# link, the login entry or the settings. It is reinstalled, not skipped.
+installed_at=$(cat "$config_dir/location" 2>/dev/null || true)
+if [ -z "$installed_at" ] && [ -L "$HOME/.local/bin/milk" ]; then
+    installed_at=$(dirname "$(readlink -f "$HOME/.local/bin/milk")")
+fi
+reinstall=0
+if [ -n "$installed_at" ] || [ -e /usr/local/bin/milk-session ] || [ -f "$config" ]; then reinstall=1; fi
 
 if [ "$uninstall" -eq 1 ]; then
     printf "$(t '%sRemovendo o milk%s (configurações, dados e os clones continuam no lugar)' \
@@ -271,6 +284,12 @@ parts="milk"
 
 printf '\n%s%s%s\n' "$B" "$(t "Plano" "Plan" "Plan")" "$N"
 info "$(t "$parts, em $MILK" "$parts, in $MILK" "$parts, en $MILK")"
+if [ "$reinstall" -eq 1 ]; then
+    where=${installed_at:-$MILK}
+    info "$(t "o milk já está instalado ($where) e será reinstalado; suas configurações em $config são mantidas" \
+              "milk is already installed ($where) and will be reinstalled; your settings in $config are kept" \
+              "milk ya está instalado ($where) y se reinstalará; tu configuración en $config se conserva")"
+fi
 if [ ${#missing[@]} -eq 0 ]; then
     info "$(t "todos os ${#available[@]} pacotes já estão instalados" "all ${#available[@]} packages are already installed" "los ${#available[@]} paquetes ya están instalados")"
 elif [ ${#missing[@]} -eq 1 ]; then
@@ -283,6 +302,9 @@ info "$(t "comandos em ~/.local/bin, o tema do Alacritty e a sessão \"milk\" na
           "commands in ~/.local/bin, the Alacritty theme and the \"milk\" session on the login screen" \
           "comandos en ~/.local/bin, el tema de Alacritty y la sesión \"milk\" en la pantalla de inicio de sesión")"
 [ "$lang_chosen" -eq 1 ] && info "$(t "idioma do milk: $lang_name" "milk's language: $lang_name" "idioma de milk: $lang_name")"
+info "$(t "no fim, a configuração inicial (tema, teclado, papéis de parede, barra) abre" \
+          "afterwards the setup wizard (theme, keyboard, wallpapers, bar) opens" \
+          "al final se abre el asistente de configuración (tema, teclado, fondos, barra)")"
 echo
 ask "$(t "Continuar?" "Continue?" "¿Continuar?")" y || { t "Nada foi alterado." "Nothing was changed." "No se cambió nada."; echo; exit 0; }
 
@@ -351,13 +373,18 @@ step "$(t "Compilando o milk" "Building milk" "Compilando milk")"
 mkdir -p "$HOME/.local/bin"
 ln -sfn "$MILK/milk" "$HOME/.local/bin/milk"
 ok "$(t "Comando: milk" "Command: milk" "Comando: milk")"
+# The login launcher starts the clone recorded here before looking elsewhere,
+# so a reinstall from another clone takes over from now on.
+mkdir -p "$config_dir"
+printf '%s\n' "$MILK" > "$config_dir/location"
 # The settings live outside the clone; a new installation starts from the defaults.
-config="${XDG_CONFIG_HOME:-$HOME/.config}/milk/milk.json"
 if [ ! -f "$config" ]; then
-    mkdir -p "$(dirname "$config")"
     cp "$MILK/milk.default.json" "$config"
     ok "$(t "Configurações em $config" "Settings in $config" "Configuración en $config")"
 fi
+# milk opens the setup wizard while this file exists (the wizard removes it),
+# even when its runtime folder says the setup already ran.
+: > "$config_dir/.setup-pending"
 if [ -f "$config" ] && [ "$icon_font" != "$NOCTALIA_FONT" ]; then
     sed -i -E "s|(\"iconFontFile\": *)\"[^\"]*\"|\1\"$icon_font\"|" "$config"
     ok "$(t "milk.json usa $icon_font" "milk.json uses $icon_font" "milk.json usa $icon_font")"
@@ -434,6 +461,8 @@ if [ ! -f "$alacritty_dir/milk.toml" ]; then
     printf '# Alacritty inside the milk session (the setup wizard switches the theme file).\n[general]\nimport = [%s]\n' "$imports" > "$alacritty_dir/milk.toml"
     ok "$(t "Criado $alacritty_dir/milk.toml" "Created $alacritty_dir/milk.toml" "Creado $alacritty_dir/milk.toml")"
 else
+    # The theme import follows the clone being installed (same light/dark file).
+    sed -i -E "s|\"[^\"]*/contrib/alacritty/(milk-[A-Za-z0-9_-]+\.toml)\"|\"$MILK/contrib/alacritty/\1\"|g" "$alacritty_dir/milk.toml"
     ok "$(t "O Alacritty já tem o tema do milk" "Alacritty already themed for milk" "Alacritty ya tiene el tema de milk")"
 fi
 
@@ -442,14 +471,28 @@ step "$(t "Tela de login" "Login screen" "Pantalla de inicio de sesión")"
 sudo "$MILK/contrib/install-sddm-session.sh" | sed 's/^/  /'
 
 printf '\n%s✓ %s%s\n' "$G" "$(t "O milk está instalado." "milk is installed." "milk está instalado.")" "$N"
-t "  Saia da sessão e escolha \"milk\" no menu de sessões da tela de login." \
-  "  Log out and pick \"milk\" in the session menu of the login screen." \
-  "  Cierra la sesión y elige \"milk\" en el menú de sesiones de la pantalla de inicio."
-echo
-t "  O primeiro início abre a configuração (tema, teclado, papéis de parede, barra)." \
-  "  The first start opens the setup (theme, keyboard, wallpapers, bar)." \
-  "  El primer inicio abre la configuración (tema, teclado, fondos de pantalla, barra)."
-echo
+# Inside a running milk session the setup opens right away (the running
+# instance reloads when it is done); elsewhere at milk's next start.
+if [ "${XDG_CURRENT_DESKTOP:-}" = milk ] && [ -n "${DISPLAY:-}" ] && "$MILK/bin/milk" status >/dev/null 2>&1; then
+    setsid -f "$MILK/bin/milk" setup >/dev/null 2>&1 < /dev/null
+    t "  A configuração inicial está abrindo (tema, teclado, papéis de parede, barra)." \
+      "  The setup is opening now (theme, keyboard, wallpapers, bar)." \
+      "  La configuración se está abriendo (tema, teclado, fondos de pantalla, barra)."
+    echo
+    t "  Saia da sessão e entre de novo para usar a nova versão do milk." \
+      "  Log out and back in to run the new build of milk." \
+      "  Cierra la sesión y vuelve a entrar para usar la nueva versión de milk."
+    echo
+else
+    t "  Saia da sessão e escolha \"milk\" no menu de sessões da tela de login." \
+      "  Log out and pick \"milk\" in the session menu of the login screen." \
+      "  Cierra la sesión y elige \"milk\" en el menú de sesiones de la pantalla de inicio."
+    echo
+    t "  O próximo início abre a configuração (tema, teclado, papéis de parede, barra)." \
+      "  The next start opens the setup (theme, keyboard, wallpapers, bar)." \
+      "  El próximo inicio abre la configuración (tema, teclado, fondos de pantalla, barra)."
+    echo
+fi
 t "  Depois: \"milk settings\" ou a engrenagem da barra; Super+E abre o Spoil." \
   "  Later: \"milk settings\" or the gear on the bar; Super+E opens Spoil." \
   "  Después: \"milk settings\" o el engranaje de la barra; Super+E abre Spoil."

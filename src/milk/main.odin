@@ -208,7 +208,8 @@ default_config_path :: proc() -> string {
 		home, has_home := os.lookup_env("HOME", context.temp_allocator)
 		config_home = join({has_home ? home : "/", ".config"}, context.temp_allocator)
 	}
-	return join({config_home, "milk", "milk.json"})
+	// Kept for the whole run (reloads read it again): not the temp allocator.
+	return join({config_home, "milk", "milk.json"}, context.allocator)
 }
 
 // milk.default.json, built into the binary: language from the system, the
@@ -496,7 +497,7 @@ run :: proc(opts: ^Options, cfg: ^config.Config) -> int {
 	apply_keyboard(cfg)
 	// First run: the setup wizard (theme, wallpapers, bar, keyboard) comes
 	// before the window manager; its choices are read back from milk.json.
-	if !opts.no_setup && (opts.new_config || oobe.needed(opts.runtime_root)) {
+	if !opts.no_setup && (opts.new_config || oobe.needed(opts.runtime_root, opts.config_path)) {
 		log.info("First run: starting the setup wizard")
 		oobe.app_version = VERSION
 		if oobe.run(c, opts.config_path, opts.runtime_root) {

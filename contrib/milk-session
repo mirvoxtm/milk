@@ -11,4 +11,14 @@ printf '%s\n' "$dir" > "${XDG_CONFIG_HOME:-$HOME/.config}/milk/location"
 
 [ -f "$HOME/.Xresources" ] && command -v xrdb >/dev/null 2>&1 && xrdb -merge "$HOME/.Xresources"
 
+# Programs started through D-Bus or systemd (portals, flameshot) take their
+# environment from the user manager, which outlives sessions and may still
+# describe an earlier Wayland one; point it at this X session.
+export XDG_CURRENT_DESKTOP="${XDG_CURRENT_DESKTOP:-milk}"
+unset WAYLAND_DISPLAY
+command -v systemctl >/dev/null 2>&1 && systemctl --user unset-environment WAYLAND_DISPLAY 2>/dev/null
+command -v dbus-update-activation-environment >/dev/null 2>&1 &&
+    dbus-update-activation-environment --systemd DISPLAY XAUTHORITY XDG_CURRENT_DESKTOP \
+        XDG_SESSION_TYPE XDG_SESSION_DESKTOP DESKTOP_SESSION 2>/dev/null
+
 exec "$dir/milk" start --foreground

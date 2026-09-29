@@ -10,6 +10,21 @@ mkdir -p "$dir"
 file="$dir/Screenshot_$(date +%Y-%m-%d_%H-%M-%S).png"
 
 if command -v flameshot >/dev/null 2>&1; then
+    # Flameshot 14 captures through xdg-desktop-portal, which has no screenshot
+    # backend on a plain X session like milk's ("Unable to capture screen");
+    # its X11 capture needs useX11LegacyScreenshot. Set once, unless the user
+    # chose a value; older versions, which lack the key, are left alone.
+    ini="${XDG_CONFIG_HOME:-$HOME/.config}/flameshot/flameshot.ini"
+    if ! grep -q '^useX11LegacyScreenshot=' "$ini" 2>/dev/null &&
+        grep -qa useX11LegacyScreenshot "$(command -v flameshot)" 2>/dev/null; then
+        mkdir -p "$(dirname "$ini")"
+        if grep -q '^\[General\]' "$ini" 2>/dev/null; then
+            sed -i '/^\[General\]/a useX11LegacyScreenshot=true' "$ini"
+        else
+            [ -s "$ini" ] && printf '\n' >> "$ini"
+            printf '[General]\nuseX11LegacyScreenshot=true\n' >> "$ini"
+        fi
+    fi
     exec flameshot gui --path "$dir"
 elif command -v maim >/dev/null 2>&1; then
     maim -s -u "$file" || exit 0

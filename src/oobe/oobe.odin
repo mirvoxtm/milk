@@ -27,6 +27,10 @@ import tx "../tx"
 
 MARKER_NAME :: ".setup-done"
 
+// Next to milk.json: install.sh leaves it so that the wizard opens again after
+// a (re)installation, even when the runtime folder says it already ran.
+PENDING_NAME :: ".setup-pending"
+
 // Environment override for the Alacritty file whose import is re-pointed at
 // the chosen theme (tests use a copy; the default is ~/.config/alacritty/milk.toml).
 ALACRITTY_ENV :: "MILK_ALACRITTY_CONFIG"
@@ -146,10 +150,17 @@ Wizard :: struct {
 	set:    Settings, // settings app state
 }
 
-// True on a fresh install: the wizard has never been completed or skipped.
-needed :: proc(runtime_root: string) -> bool {
+// True on a fresh install (the wizard has never been completed or skipped)
+// and after install.sh ran.
+needed :: proc(runtime_root, config_path: string) -> bool {
 	path, _ := filepath.join({runtime_root, MARKER_NAME}, context.temp_allocator)
-	return !os.exists(path)
+	return !os.exists(path) || os.exists(pending_path(config_path))
+}
+
+@(private)
+pending_path :: proc(config_path: string) -> string {
+	path, _ := filepath.join({filepath.dir(config_path), PENDING_NAME}, context.temp_allocator)
+	return path
 }
 
 // Show the wizard and block until the user finishes or skips it. Returns true
