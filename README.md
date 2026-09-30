@@ -1,6 +1,6 @@
 # milk
 
-![milk](press/screenshot.png)
+![floating/tiling demo](press/demo1.gif)
 
 > milk - minimal interface layout kit. a super lightweight, self-contained X11 desktop.
 
@@ -28,15 +28,13 @@ your settings live in `~/.config/milk/milk.json`.
 
 ## tiling or floating
 
-![floating/tiling demo](press/demo1.gif)
-
 as a minimal interface layout kit, as of version 1.1.0 milk supports floating windows! 
-
-## configuring your flavour
 
 ![changing behaviour demo](press/demo2.gif)
 
-check out how easy it is to instantly change to your preferred window management system and configure milk instantly based on your current mood. pretty nice innit?
+milk supports changing settings out of the box without having to restart the wm all the time! check out how easy it is to instantly change to your preferred window management system and configure milk instantly based on your current mood. pretty nice innit?
+
+as of version 1.1.0, milk now also supports desktop icons with future support planned for icons-per-area.
 
 ## updating
 updating from a version that kept `milk.json` inside the clone: if `git pull` refuses because of it, run `git checkout -- milk.json && git pull`. 
