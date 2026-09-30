@@ -22,6 +22,7 @@ import "core:log"
 import "core:strings"
 import "core:unicode"
 import xlib "vendor:x11/xlib"
+import tx "../tx"
 
 // _NET_WM_MOVERESIZE directions.
 MR_SIZE_TOPLEFT     :: 0
@@ -258,6 +259,7 @@ moveresize :: proc(m: ^Manager, c: ^Client, dir: int, px, py: i32, button: u32) 
 	bottom := dir == MR_SIZE_BOTTOMRIGHT || dir == MR_SIZE_BOTTOM || dir == MR_SIZE_BOTTOMLEFT
 	// togglefloating acts on the selection: only the selected client may leave the tiling.
 	can_float := c == m.selmon.sel
+	zone := Snap.None // snap layout under the pointer (floating mode)
 	lasttime: xlib.Time
 	ev: xlib.XEvent
 	loop: for {
@@ -282,21 +284,25 @@ moveresize :: proc(m: ^Manager, c: ^Client, dir: int, px, py: i32, button: u32) 
 			sm := m.selmon
 			arranged := has_arrange(cur_layout(sm))
 			if dir == MR_MOVE {
+				// milk: a maximized or snapped window dragged away gets its old
+				// size back, under the pointer at the same relative place.
+				if (c.max_horz || c.max_vert || c.snapped != .None) && c.has_saved && (abs(dx) > 8 || abs(dy) > 8) {
+					rel := f32(px - c.x) / f32(max(width(c), 1))
+					unsnap_for_drag(m, c)
+					ocx = px - i32(rel * f32(width(c)))
+					// The pointer ends up in the middle of the title bar (or keeps its height).
+					ocy = has_title(c) ? py - c.ext[2] / 2 : c.y - dy
+				}
 				nx, ny := ocx + dx, ocy + dy
-				if abs(sm.wx - nx) < SNAP {
-					nx = sm.wx
-				} else if abs((sm.wx + sm.ww) - (nx + width(c))) < SNAP {
-					nx = sm.wx + sm.ww - width(c)
-				}
-				if abs(sm.wy - ny) < SNAP {
-					ny = sm.wy
-				} else if abs((sm.wy + sm.wh) - (ny + height(c))) < SNAP {
-					ny = sm.wy + sm.wh - height(c)
-				}
+				nx, ny = snap_position(m, c, sm, nx, ny)
 				if !c.isfloating && arranged && can_float && (abs(nx - c.x) > SNAP || abs(ny - c.y) > SNAP) {
 					togglefloating(m, nil)
 				}
 				if !arranged || c.isfloating { resize(m, c, nx, ny, c.w, c.h, true) }
+				if m.settings.floating && m.settings.snap_layouts && c.kind == .Normal && !c.isfixed {
+					zone = snap_zone(m, ev.xmotion.x_root, ev.xmotion.y_root)
+					snap_preview(m, zone, recttomon(m, ev.xmotion.x_root, ev.xmotion.y_root, 1, 1))
+				}
 			} else {
 				nx, ny, nw, nh := ocx, ocy, ocw, och
 				if left {
@@ -330,11 +336,116 @@ moveresize :: proc(m: ^Manager, c: ^Client, dir: int, px, py: i32, button: u32) 
 		}
 	}
 	xlib.UngrabPointer(m.dpy, xlib.CurrentTime)
+	snap_preview(m, .None, nil)
 	discard_enter_events(m)
 	if mon := recttomon(m, c.x, c.y, c.w, c.h); mon != m.selmon {
 		sendmon(m, c, mon)
 		m.selmon = mon
 		focus(m, nil)
 	}
+	if zone != .None { set_snapped(m, c, zone) }
 	m.ewmh.stacking_dirty = true
+}
+
+// Leave maximize/snap for a mouse drag: the saved size comes back (the
+// caller places the window under the pointer).
+@(private)
+unsnap_for_drag :: proc(m: ^Manager, c: ^Client) {
+	c.max_horz, c.max_vert, c.snapped = false, false, .None
+	c.has_saved = false
+	c.w, c.h = c.saved[2], c.saved[3]
+	write_state_atom(m, c, m.atoms.net_wm_state_maximized_horz, false)
+	write_state_atom(m, c, m.atoms.net_wm_state_maximized_vert, false)
+	grip_update(m, c)
+	frame_paint(m, c)
+}
+
+// Edge resistance (wm.snapDistance): a moved window sticks to the edges of
+// the window area and, in the floating mode, to the edges of the other
+// windows it lines up with.
+@(private)
+snap_position :: proc(m: ^Manager, c: ^Client, sm: ^Monitor, x, y: i32) -> (i32, i32) {
+	d := m.settings.floating ? m.settings.snap_distance : SNAP
+	if d <= 0 { return x, y }
+	w, h := width(c), height(c)
+	best_x, best_y := d, d
+	nx, ny := x, y
+	try_x :: proc(best: ^i32, out: ^i32, edge, x, w: i32) {
+		if dist := abs(x - edge); dist < best^ { best^, out^ = dist, edge }
+		if dist := abs(x + w - edge); dist < best^ { best^, out^ = dist, edge - w }
+	}
+	try_x(&best_x, &nx, sm.wx, x, w)
+	try_x(&best_x, &nx, sm.wx + sm.ww, x, w)
+	try_x(&best_y, &ny, sm.wy, y, h)
+	try_x(&best_y, &ny, sm.wy + sm.wh, y, h)
+	if m.settings.floating {
+		for o := sm.clients; o != nil; o = o.next {
+			if o == c || !is_visible(o) || o.kind != .Normal || o.isfullscreen { continue }
+			ow, oh := width(o), height(o)
+			// Only edges the window could touch: overlapping on the other axis.
+			if y < o.y + oh + d && y + h > o.y - d {
+				try_x(&best_x, &nx, o.x, x, w)
+				try_x(&best_x, &nx, o.x + ow, x, w)
+			}
+			if x < o.x + ow + d && x + w > o.x - d {
+				try_x(&best_y, &ny, o.y, y, h)
+				try_x(&best_y, &ny, o.y + oh, y, h)
+			}
+		}
+	}
+	return nx, ny
+}
+
+// The snap layout for a pointer at a monitor edge: the sides give halves,
+// their ends quarters, the top edge maximizes.
+@(private)
+snap_zone :: proc(m: ^Manager, x, y: i32) -> Snap {
+	mon := recttomon(m, x, y, 1, 1)
+	EDGE :: 2
+	CORNER :: 60
+	left := x <= mon.mx + EDGE
+	right := x >= mon.mx + mon.mw - 1 - EDGE
+	top := y <= mon.my + EDGE
+	upper := y < mon.my + CORNER
+	lower := y > mon.my + mon.mh - CORNER
+	switch {
+	case left && upper:  return .Top_Left
+	case left && lower:  return .Bottom_Left
+	case left:           return .Left
+	case right && upper: return .Top_Right
+	case right && lower: return .Bottom_Right
+	case right:          return .Right
+	case top:            return .Top
+	}
+	return .None
+}
+
+// Show where a drag would snap (None hides it): a translucent accent
+// rectangle with a compositor, an accent outline without one.
+@(private)
+snap_preview :: proc(m: ^Manager, zone: Snap, mon: ^Monitor) {
+	if zone == .None || mon == nil {
+		if m.snap_preview != 0 { xlib.UnmapWindow(m.dpy, m.snap_preview) }
+		return
+	}
+	r := snap_rect(m, mon, zone)
+	if m.snap_preview == 0 {
+		m.snap_preview = tx.create_overlay(m.c, r, {}, "_NET_WM_WINDOW_TYPE_DND", "milk snap preview")
+		accent := m.settings.colors.accent
+		xlib.SetWindowBackground(m.dpy, m.snap_preview, uint(accent.r) << 16 | uint(accent.g) << 8 | uint(accent.b))
+	}
+	tx.move_resize(m.c, m.snap_preview, r)
+	if m.cm.owner != 0 {
+		tx.set_cardinals(m.c, m.snap_preview, "_NET_WM_WINDOW_OPACITY", {0x55555555})
+		tx.shape_rounded(m.c, m.snap_preview, r.w, r.h, f32(m.settings.corner_radius))
+	} else {
+		t: i32 = 4
+		rects := [4]xlib.XRectangle{
+			{0, 0, u16(r.w), u16(t)}, {0, i16(r.h - t), u16(r.w), u16(t)},
+			{0, 0, u16(t), u16(r.h)}, {i16(r.w - t), 0, u16(t), u16(r.h)},
+		}
+		tx.XShapeCombineRectangles(m.dpy, m.snap_preview, 0, 0, 0, &rects[0], 4, 0, 0)
+	}
+	xlib.MapRaised(m.dpy, m.snap_preview)
+	xlib.Flush(m.dpy)
 }

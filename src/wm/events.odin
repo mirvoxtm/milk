@@ -11,6 +11,8 @@ buttonpress :: proc(m: ^Manager, e: ^xlib.XEvent) -> bool {
 	ev := &e.xbutton
 	c := wintoclient(m, ev.window)
 	if c == nil && ev.window != m.root { return false }
+	m.ev_ctx = Action_Ctx{x = ev.x_root, y = ev.y_root, time = ev.time, button = u32(ev.button), state = ev.state}
+	m.ev_client = c
 	click := Click.Root_Win
 	// focus monitor if necessary
 	if mon := wintomon(m, ev.window); mon != nil && mon != m.selmon {
@@ -33,6 +35,11 @@ buttonpress :: proc(m: ^Manager, e: ^xlib.XEvent) -> bool {
 		}
 		xlib.AllowEvents(m.dpy, .ReplayPointer, xlib.CurrentTime)
 		click = .Client_Win
+	} else if m.settings.floating && ev.button == .Button1 && cleanmask(m, ev.state) == {} && m.selmon.sel != nil {
+		// milk: a click on the empty desktop takes the focus from the windows,
+		// as in openbox (the desktop icons then get the keyboard).
+		unfocus(m, m.selmon.sel, true)
+		m.selmon.sel = nil
 	}
 	for i in 0 ..< len(m.buttons) {
 		b := m.buttons[i]
@@ -40,20 +47,47 @@ buttonpress :: proc(m: ^Manager, e: ^xlib.XEvent) -> bool {
 		   cleanmask(m, b.mask) == cleanmask(m, ev.state) {
 			arg := b.arg
 			b.func(m, &arg)
+			break // one action per click: a user binding replaces the default with the same button
 		}
 	}
+	m.ev_client = nil
 	return true
 }
 
 clientmessage :: proc(m: ^Manager, e: ^xlib.XEvent) -> bool {
 	cme := &e.xclient
 	a := &m.atoms
-	if cme.message_type == a.net_current_desktop {
+	switch cme.message_type {
+	case a.net_current_desktop:
 		// milk: switch to a desktop (bar dot clicks, `milk switch N`).
 		index := cme.data.l[0]
 		if index >= 0 && index < m.settings.tag_count {
 			arg := Arg{ui = u32(1) << u32(index)}
 			view(m, &arg)
+		}
+		return true
+	case a.net_showing_desktop:
+		set_showing_desktop(m, cme.data.l[0] != 0)
+		return true
+	case a.net_request_frame_extents:
+		// Before mapping: the extents the window will get.
+		if wintoclient(m, cme.window) == nil {
+			ext: [4]uint
+			if m.settings.floating {
+				b, t := uint(m.settings.border_width), uint(m.settings.title_height)
+				ext = {b, b, b + t, b}
+				probe := Client{win = cme.window}
+				if motif_undecorated(m, &probe) { ext = {} }
+			}
+			xlib.ChangeProperty(m.dpy, cme.window, a.net_frame_extents, tx.ATOM_CARDINAL, 32, xlib.PropModeReplace, &ext[0], 4)
+		}
+		return true
+	case a.milk_window_menu:
+		// The bar's task list: the menu of a window at a point.
+		target := wintoclient(m, xlib.Window(uint(cme.data.l[0])))
+		if target == nil { target = wintoclient(m, cme.window) }
+		if target != nil {
+			run_action(m, "window-menu", target, {x = i32(cme.data.l[1]), y = i32(cme.data.l[2]), time = xlib.Time(uint(cme.data.l[3]))})
 		}
 		return true
 	}
@@ -66,13 +100,21 @@ clientmessage :: proc(m: ^Manager, e: ^xlib.XEvent) -> bool {
 			setfullscreen(m, c, cme.data.l[0] == 1 || // _NET_WM_STATE_ADD
 			                    (cme.data.l[0] == 2 && !c.isfullscreen)) // _NET_WM_STATE_TOGGLE
 		}
+		handle_state_message(m, c, cme.data.l[0], {xlib.Atom(uint(cme.data.l[1])), xlib.Atom(uint(cme.data.l[2]))})
+	case a.wm_change_state:
+		// ICCCM: a client (or a task list) iconifies the window.
+		if cme.data.l[0] == int(xlib.WMHintState.IconicState) { set_minimized(m, c, true) }
 	case a.net_active_window:
-		if is_focusable(c) {
+		if c.minimized || (cme.data.l[0] == 2 && !on_current_tags(c)) {
+			// milk: a pager or task list brings the window forward from anywhere.
+			activate_client(m, c)
+		} else if is_focusable(c) {
 			// milk: activate a client that is on screen (dwm only marks it urgent).
 			focus(m, c)
 			restack(m, c.mon)
 		} else if c != m.selmon.sel && !c.isurgent {
 			seturgent(m, c, true)
+			frame_paint(m, c)
 		}
 	case a.net_close_window:
 		kill_client(m, c)
@@ -82,17 +124,29 @@ clientmessage :: proc(m: ^Manager, e: ^xlib.XEvent) -> bool {
 	case a.net_wm_desktop:
 		if c.ispip { break } // picture-in-picture windows are on every desktop
 		index := uint(cme.data.l[0]) & 0xFFFFFFFF
-		newtags: u32
 		if index == 0xFFFFFFFF {
-			newtags = tagmask(m)
-		} else if int(index) < m.settings.tag_count {
-			newtags = u32(1) << u32(index)
+			set_sticky(m, c, true)
+			break
 		}
-		if newtags != 0 && newtags != c.tags {
-			c.tags = newtags
-			focus(m, nil)
-			arrange(m, c.mon)
+		if int(index) < m.settings.tag_count {
+			if c.sticky { set_sticky(m, c, false) }
+			newtags := u32(1) << u32(index)
+			if newtags != c.tags {
+				c.tags = newtags
+				focus(m, nil)
+				arrange(m, c.mon)
+			}
 		}
+	case a.net_moveresize_window:
+		// Pagers and scripts (xdotool, wmctrl): gravity bits 8..11 name the fields given.
+		flags := uint(cme.data.l[0])
+		if !is_free(m, c) { break }
+		x, y, w, h := c.x, c.y, c.w, c.h
+		if flags & (1 << 8) != 0 { x = i32(cme.data.l[1]) }
+		if flags & (1 << 9) != 0 { y = i32(cme.data.l[2]) }
+		if flags & (1 << 10) != 0 { w = i32(cme.data.l[3]) }
+		if flags & (1 << 11) != 0 { h = i32(cme.data.l[4]) }
+		resize(m, c, x, y, w, h, false)
 	}
 	return true
 }
@@ -103,7 +157,10 @@ configurerequest :: proc(m: ^Manager, e: ^xlib.XEvent) -> bool {
 	if c := wintoclient(m, ev.window); c != nil {
 		if .CWWidth in mask { c.reqw = ev.width }
 		if .CWHeight in mask { c.reqh = ev.height }
-		if .CWBorderWidth in mask {
+		if c.frame != 0 && (c.max_horz || c.max_vert || c.snapped != .None || c.isfullscreen) {
+			// milk: a maximized, snapped or fullscreen window keeps its place.
+			configure(m, c)
+		} else if .CWBorderWidth in mask && c.frame == 0 {
 			c.bw = ev.border_width
 		} else if c.isfloating || !has_arrange(cur_layout(m.selmon)) {
 			mon := c.mon
@@ -129,13 +186,10 @@ configurerequest :: proc(m: ^Manager, e: ^xlib.XEvent) -> bool {
 			if c.y + c.h > mon.my + mon.mh && c.isfloating {
 				c.y = mon.my + (mon.mh / 2 - height(c) / 2) // center in y direction
 			}
-			if (.CWX in mask || .CWY in mask) && !(.CWWidth in mask || .CWHeight in mask) {
+			if (.CWX in mask || .CWY in mask) && !(.CWWidth in mask || .CWHeight in mask) || c.frame != 0 {
 				configure(m, c)
 			}
-			if is_visible(c) {
-				xlib.MoveResizeWindow(m.dpy, c.win, c.x, c.y, u32(max(c.w, 1)), u32(max(c.h, 1)))
-				anim_sync_display(m, c)
-			}
+			if is_visible(c) { anim_snap(m, c) }
 		} else {
 			configure(m, c)
 		}
@@ -181,7 +235,7 @@ destroynotify :: proc(m: ^Manager, e: ^xlib.XEvent) -> bool {
 	return true
 }
 
-// Focus follows the mouse (wm.focusFollowsMouse).
+// Focus follows the mouse (wm.focusFollowsMouse); wm.raiseOnFocus raises too.
 enternotify :: proc(m: ^Manager, e: ^xlib.XEvent) -> bool {
 	if !m.settings.focus_follows_mouse { return false }
 	ev := &e.xcrossing
@@ -196,6 +250,7 @@ enternotify :: proc(m: ^Manager, e: ^xlib.XEvent) -> bool {
 		return false
 	}
 	focus(m, c)
+	if c != nil && m.settings.raise_on_focus { restack(m, c.mon) }
 	return true
 }
 
@@ -211,16 +266,16 @@ keypress :: proc(m: ^Manager, e: ^xlib.XEvent) -> bool {
 	ev := &e.xkey
 	keysym := xlib.KeycodeToKeysym(m.dpy, xlib.KeyCode(ev.keycode), 0)
 	state := cleanmask(m, ev.state)
-	matched := false
+	m.ev_ctx = Action_Ctx{x = ev.x_root, y = ev.y_root, time = ev.time, state = ev.state}
 	for i in 0 ..< len(m.keys) {
 		k := m.keys[i]
 		if keysym == k.keysym && cleanmask(m, k.mod) == state && k.func != nil {
 			arg := k.arg
 			k.func(m, &arg)
-			matched = true
+			return true // one action per key: a user binding replaces the default with the same keys
 		}
 	}
-	return matched
+	return false
 }
 
 mappingnotify :: proc(m: ^Manager, e: ^xlib.XEvent) -> bool {
@@ -289,23 +344,42 @@ propertynotify :: proc(m: ^Manager, e: ^xlib.XEvent) -> bool {
 		}
 	case xlib.XA_WM_HINTS:
 		updatewmhints(m, c)
+		frame_paint(m, c)
 	}
 	if ev.atom == tx.ATOM_WM_NAME || ev.atom == m.atoms.net_wm_name {
 		updatetitle(m, c)
 		// Browsers may title their PiP window only after mapping it.
 		if !c.ispip && detect_pip(m, c) { pip_apply(m, c, false, false) }
+		frame_paint(m, c)
 	}
 	if ev.atom == m.atoms.net_wm_window_type { updatewindowtype(m, c) }
+	if c.frame != 0 {
+		switch ev.atom {
+		case m.atoms.net_wm_icon:
+			load_icon(m, c)
+			frame_paint(m, c)
+		case m.atoms.motif_wm_hints:
+			// Browsers switch between their own title bar and the system's.
+			nodecor := motif_undecorated(m, c)
+			if nodecor != c.nodecor {
+				c.nodecor = nodecor
+				frame_refresh(m, c)
+				apply_corners(m, c)
+			}
+		}
+	}
 	return true
 }
 
 unmapnotify :: proc(m: ^Manager, e: ^xlib.XEvent) -> bool {
 	ev := &e.xunmap
 	c := wintoclient(m, ev.window)
-	if c == nil { return false }
+	if c == nil || ev.window != c.win { return false }
 	if ev.send_event {
 		setclientstate(m, c, .WithdrawnState)
-	} else {
+	} else if ev.event == ev.window {
+		// Each unmap is reported to the client window and to its parent (the
+		// root or the frame); acting on the client's own report handles it once.
 		unmanage(m, c, false)
 	}
 	return true

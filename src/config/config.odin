@@ -22,7 +22,9 @@ OVERRIDE_MODES      :: []string{"auto", "always", "never"}
 @(rodata) DEFAULT_BAR_CENTER := []string{"workspaces", "media"}
 @(rodata) DEFAULT_BAR_END    := []string{"clipboard", "network", "bluetooth", "volume", "brightness", "battery", "date", "clock", "notifications", "settings", "session"}
 BAR_WIDGETS         :: []string{"launcher", "active_window", "workspaces", "media", "spacer", "notifications", "clipboard",
-                                 "recorder", "network", "bluetooth", "volume", "brightness", "battery", "date", "clock", "settings", "session"}
+                                 "recorder", "network", "bluetooth", "volume", "brightness", "battery", "date", "clock", "settings", "session",
+                                 "tasks"}
+DESKTOP_ICON_SORTS  :: []string{"name", "type", "modified"}
 
 Workspace :: struct {
 	index:     int,
@@ -56,10 +58,21 @@ Shortcut_Options :: struct {
 	monitor:      string, // "primary" or a RandR output name
 }
 
+// Files of a folder (the XDG Desktop folder by default) as desktop icons,
+// next to the area shortcuts; drawn with the look of linux.shortcuts.
+Desktop_Icon_Options :: struct {
+	enabled:     bool,
+	folder:      string, // "" = the XDG Desktop folder (XDG_DESKTOP_DIR)
+	show_hidden: bool,   // dot files
+	sort:        string, // name | type | modified: order of icons that have no saved place
+	thumbnails:  bool,   // previews of images instead of their type icon
+}
+
 Linux_Options :: struct {
 	wallpaper_mode: string,
 	indicator:      Indicator_Options,
 	shortcuts:      Shortcut_Options,
+	desktop_icons:  Desktop_Icon_Options,
 }
 
 Bar_Theme :: struct {
@@ -254,16 +267,142 @@ valid_custom_theme_name :: proc(name: string) -> bool {
 }
 
 WM_MOD_KEYS :: []string{"super", "alt"}
+WM_MODES :: []string{"tiling", "floating"}
+WM_PLACEMENTS :: []string{"smart", "center", "mouse", "cascade"}
+TITLE_ALIGNS :: []string{"left", "center", "right"}
+TITLE_BUTTON_STYLES :: []string{"icons", "circles"}
+RULE_LAYERS :: []string{"above", "normal", "below"}
 
 // A dwm-style rule: windows whose WM_CLASS / title match get these tags, floating state and monitor.
+// The optional fields (openbox's <applications>) place and dress the window when it appears.
 WM_Rule :: struct {
-	class:    string, // WM_CLASS class, exact match ("" = any)
-	instance: string, // WM_CLASS instance, exact match ("" = any)
-	title:    string, // substring of the window title ("" = any)
-	tags:     uint,   // tag bitmask; 0 = the current tags
-	floating: bool,
-	monitor:  int,    // -1 = the current monitor
-	pip:      bool,   // treat as a picture-in-picture window (see wm)
+	class:       string, // WM_CLASS class, exact match ("" = any)
+	instance:    string, // WM_CLASS instance, exact match ("" = any)
+	title:       string, // substring of the window title ("" = any)
+	tags:        uint,   // tag bitmask; 0 = the current tags
+	floating:    bool,
+	monitor:     int,    // -1 = the current monitor
+	pip:         bool,   // treat as a picture-in-picture window (see wm)
+	x, y:        Maybe(int),  // position in the monitor's window area (negative: from the right/bottom edge)
+	center:      bool,        // "x"/"y": "center"
+	width:       Maybe(int),
+	height:      Maybe(int),
+	maximized:   bool,
+	minimized:   bool,
+	fullscreen:  bool,
+	sticky:      bool,        // on every area
+	decorations: Maybe(bool), // title bar in floating mode (false = none)
+	layer:       string,      // "" | above | normal | below
+	focus:       Maybe(bool), // give it the focus when it appears
+}
+
+// Title bars of the floating mode (openbox's theme and titleLayout).
+Title_Bar_Options :: struct {
+	height:         int,
+	layout:         string, // letters: N icon, L title, I minimize, M maximize, C close, S shade, D all areas, A always on top
+	align:          string, // left | center | right
+	font:           string, // "" = bar.font
+	font_size:      int,    // pixels; 0 = bar.fontSize - 1
+	button_style:   string, // icons | circles
+	active_color:   string, // "" = from the theme; else #RRGGBB
+	inactive_color: string,
+	active_text:    string,
+	inactive_text:  string,
+}
+
+// An entry of the root menu (wm.menu): a built-in action, a command, a
+// separator or a submenu.
+Menu_Item :: struct {
+	label:     string,
+	action:    string, // a WM action ("" when command, items or separator)
+	command:   string, // shell command
+	separator: bool,
+	items:     []Menu_Item, // submenu
+}
+
+// Built-in window manager actions for wm.keys, wm.mouse and wm.menu, written
+// "name" or "name argument". ACTIONS_WITH_ARGUMENT need one; "exec" takes the
+// rest of the text as a shell command; "settings" takes an optional section.
+WM_ACTIONS :: []string{
+	"none", "close", "kill", "minimize", "maximize", "maximize-horizontal", "maximize-vertical", "restore",
+	"fullscreen", "shade", "unshade", "above", "below", "sticky", "decorations", "center", "raise", "lower",
+	"snap-left", "snap-right", "snap-top", "snap-bottom", "snap-top-left", "snap-top-right", "snap-bottom-left",
+	"snap-bottom-right", "move", "resize", "window-menu", "root-menu", "window-list", "area-list",
+	"switch-windows", "switch-windows-reverse", "show-desktop", "focus-next", "focus-prev", "toggle-floating",
+	"view-next", "view-prev", "view-last", "send-next", "send-prev", "terminal", "launcher", "files",
+	"screenshot", "clipboard", "notifications", "reload", "quit",
+	"desktop-new-folder", "desktop-arrange", "desktop-open-folder",
+	"view", "send", "layout", "focus-monitor", "send-monitor", "exec", "settings",
+}
+ACTIONS_WITH_ARGUMENT :: []string{"view", "send", "layout", "focus-monitor", "send-monitor", "exec"}
+WM_LAYOUT_NAMES :: []string{"tile", "float", "monocle"}
+
+// Mouse contexts and buttons for wm.mouse: "title:double", "root:right", "client:mod+left"...
+MOUSE_CONTEXTS :: []string{"title", "icon", "root", "client"}
+MOUSE_BUTTONS :: []string{"left", "middle", "right", "double", "scroll-up", "scroll-down"}
+
+// wm.mouse defaults; the user's entries replace these one by one.
+@(rodata) DEFAULT_MOUSE := [][2]string{
+	{"title:double", "maximize"}, {"title:middle", "lower"}, {"title:right", "window-menu"},
+	{"title:scroll-up", "shade"}, {"title:scroll-down", "unshade"},
+	{"icon:left", "window-menu"}, {"icon:double", "close"},
+	{"root:right", "root-menu"}, {"root:middle", "window-list"},
+	{"root:scroll-up", "view-prev"}, {"root:scroll-down", "view-next"},
+	{"client:mod+left", "move"}, {"client:mod+middle", "toggle-floating"}, {"client:mod+right", "resize"},
+}
+
+// Split "name argument" (the argument may be empty).
+split_action :: proc(spec: string) -> (name, argument: string) {
+	s := strings.trim_space(spec)
+	if i := strings.index_any(s, " \t"); i >= 0 { return s[:i], strings.trim_space(s[i + 1:]) }
+	return s, ""
+}
+
+// Whether `spec` names a built-in action with a usable argument.
+valid_wm_action :: proc(spec: string) -> bool {
+	name, arg := split_action(spec)
+	known := false
+	for a in WM_ACTIONS { if a == name { known = true; break } }
+	if !known { return false }
+	needs := false
+	for a in ACTIONS_WITH_ARGUMENT { if a == name { needs = true; break } }
+	if needs && arg == "" { return false }
+	switch name {
+	case "view", "send":
+		n, ok := strconv.parse_int(arg, 10)
+		return ok && n >= 1 && n <= 32
+	case "layout":
+		for l in WM_LAYOUT_NAMES { if l == arg { return true } }
+		return false
+	case "focus-monitor", "send-monitor":
+		return arg == "next" || arg == "prev"
+	case "exec", "settings":
+		return true
+	}
+	return arg == ""
+}
+
+// Whether `spec` is a wm.mouse key: "context:button" with modifiers before the
+// button for the client context ("client:mod+left", "client:alt+shift+right").
+valid_mouse_binding :: proc(spec: string) -> bool {
+	colon := strings.index_byte(spec, ':')
+	if colon < 0 { return false }
+	ctx := spec[:colon]
+	parts := strings.split(spec[colon + 1:], "+", context.temp_allocator)
+	known_ctx := false
+	for c in MOUSE_CONTEXTS { if c == ctx { known_ctx = true; break } }
+	if !known_ctx || len(parts) == 0 { return false }
+	button := parts[len(parts) - 1]
+	known_button := false
+	for b in MOUSE_BUTTONS { if b == button { known_button = true; break } }
+	if !known_button { return false }
+	for m in parts[:len(parts) - 1] {
+		switch strings.to_lower(m, context.temp_allocator) {
+		case "mod", "super", "win", "alt", "ctrl", "control", "shift":
+		case: return false
+		}
+	}
+	return true
 }
 
 // The built-in dwm-inspired window manager.
@@ -287,6 +426,19 @@ WM_Options :: struct {
 	corner_radius:       int,               // rounded window corners in pixels; 0 = square
 	rules:               []WM_Rule,
 	bindings:            map[string]string, // "super+shift+f" -> command to spawn
+	// Floating mode (an openbox-like stacking window manager with title bars).
+	mode:                string,            // tiling | floating
+	title_bar:           Title_Bar_Options,
+	placement:           string,            // smart | center | mouse | cascade: where new windows appear
+	snap_distance:       int,               // resistance of screen edges and other windows while moving, pixels; 0 = off
+	snap_layouts:        bool,              // dragging to a screen edge snaps to a half, a quarter or maximized
+	resize_margin:       int,               // invisible border around windows for resizing with the mouse, pixels
+	focus_new:           bool,              // new windows get the focus
+	raise_on_focus:      bool,              // focus follows mouse also raises the window
+	keys:                map[string]string, // "super+up" -> built-in action (see WM_ACTIONS)
+	mouse:               map[string]string, // "title:double" -> action; DEFAULT_MOUSE merged with the user's entries
+	menu:                []Menu_Item,       // root menu (right-click on the desktop)
+	has_menu:            bool,              // false = milk's default menu
 }
 
 Config :: struct {
@@ -365,7 +517,17 @@ default_wm :: proc() -> WM_Options {
 		border_width = 2, border_color = "#444444", focus_color = "#4A3F35", gaps = 0,
 		master_factor = 0.55, master_count = 1, resize_hints = true, focus_follows_mouse = true,
 		tag_count = 9, animation = 180, screenshot = "", corner_radius = 10,
+		mode = "tiling", title_bar = default_title_bar(), placement = "smart", snap_distance = 16,
+		snap_layouts = true, resize_margin = 6, focus_new = true, raise_on_focus = false,
 	}
+}
+
+default_title_bar :: proc() -> Title_Bar_Options {
+	return {height = 32, layout = "NLIMC", align = "left", font = "", font_size = 0, button_style = "icons"}
+}
+
+default_desktop_icons :: proc() -> Desktop_Icon_Options {
+	return {enabled = false, folder = "", show_hidden = false, sort = "name", thumbnails = true}
 }
 
 // ---------------------------------------------------------------------------
@@ -496,7 +658,7 @@ parse_linux :: proc(l: ^Loader, root: json.Object, out: ^Linux_Options) -> bool 
 	sc_defaults := default_shortcuts()
 	section, ok := get_object(l, root, "linux", "milk.json")
 	if !ok { return false }
-	reject_unknown(l, section, {"wallpaperMode", "indicator", "shortcuts"}, "linux") or_return
+	reject_unknown(l, section, {"wallpaperMode", "indicator", "shortcuts", "desktopIcons"}, "linux") or_return
 	out.wallpaper_mode = get_choice(l, section, "wallpaperMode", "linux", "fill", WALLPAPER_MODES) or_return
 
 	ind := get_object(l, section, "indicator", "linux") or_return
@@ -530,6 +692,17 @@ parse_linux :: proc(l: ^Loader, root: json.Object, out: ^Linux_Options) -> bool 
 				out.shortcuts.margins[i] = int(n)
 			}
 		}
+	}
+
+	di_defaults := default_desktop_icons()
+	di := get_object(l, section, "desktopIcons", "linux") or_return
+	{
+		reject_unknown(l, di, {"enabled", "folder", "showHidden", "sort", "thumbnails"}, "linux.desktopIcons") or_return
+		out.desktop_icons.enabled = get_bool(l, di, "enabled", "linux.desktopIcons", di_defaults.enabled) or_return
+		out.desktop_icons.folder = get_string(l, di, "folder", "linux.desktopIcons", "", true) or_return
+		out.desktop_icons.show_hidden = get_bool(l, di, "showHidden", "linux.desktopIcons", di_defaults.show_hidden) or_return
+		out.desktop_icons.sort = get_choice(l, di, "sort", "linux.desktopIcons", di_defaults.sort, DESKTOP_ICON_SORTS) or_return
+		out.desktop_icons.thumbnails = get_bool(l, di, "thumbnails", "linux.desktopIcons", di_defaults.thumbnails) or_return
 	}
 	return true
 }
@@ -605,7 +778,12 @@ parse_wm :: proc(l: ^Loader, root: json.Object, out: ^WM_Options) -> bool {
 	if !ok { return false }
 	reject_unknown(l, section, {"enabled", "modKey", "terminal", "launcher", "borderWidth", "borderColor", "focusColor",
 	                            "gaps", "masterFactor", "masterCount", "resizeHints", "focusFollowsMouse", "tagCount",
-	                            "animation", "screenshot", "fileManager", "cornerRadius", "rules", "bindings"}, "wm") or_return
+	                            "animation", "screenshot", "fileManager", "cornerRadius", "rules", "bindings",
+	                            "mode", "titleBar", "placement", "snapDistance", "snapLayouts", "resizeMargin",
+	                            "focusNew", "raiseOnFocus", "keys", "mouse", "menu"}, "wm") or_return
+	out.keys = make(map[string]string)
+	out.mouse = make(map[string]string)
+	for pair in DEFAULT_MOUSE { out.mouse[strings.clone(pair[0])] = strings.clone(pair[1]) }
 	out.enabled = get_bool(l, section, "enabled", "wm", d.enabled) or_return
 	out.mod_key = get_choice(l, section, "modKey", "wm", d.mod_key, WM_MOD_KEYS) or_return
 	out.terminal = get_string(l, section, "terminal", "wm", d.terminal) or_return
@@ -649,8 +827,12 @@ parse_wm :: proc(l: ^Loader, root: json.Object, out: ^WM_Options) -> bool {
 			obj, is_obj := item.(json.Object)
 			scope := fmt.tprintf("wm.rules[%d]", i)
 			if !is_obj { return fail(l, "%s must be an object.", scope) }
-			reject_unknown(l, obj, {"class", "instance", "title", "tags", "floating", "monitor", "pip"}, scope) or_return
-			rule: WM_Rule
+			reject_unknown(l, obj, {"class", "instance", "title", "tags", "floating", "monitor", "pip", "x", "y", "width", "height",
+			                        "maximized", "minimized", "fullscreen", "sticky", "decorations", "layer", "focus"}, scope) or_return
+			// Appended first, so that destroy() frees what was cloned if a later field fails.
+			append(&rules, WM_Rule{})
+			out.rules = rules[:]
+			rule := &rules[len(rules) - 1]
 			rule.class = get_string(l, obj, "class", scope, "", true) or_return
 			rule.instance = get_string(l, obj, "instance", scope, "", true) or_return
 			rule.title = get_string(l, obj, "title", scope, "", true) or_return
@@ -660,10 +842,73 @@ parse_wm :: proc(l: ^Loader, root: json.Object, out: ^WM_Options) -> bool {
 			rule.pip = get_bool(l, obj, "pip", scope, false) or_return
 			mon := get_number(l, obj, "monitor", scope, -1, -1) or_return
 			rule.monitor = int(mon)
-			append(&rules, rule)
+			for key in ([]string{"x", "y"}) {
+				v, has := obj[key]
+				if !has { continue }
+				if s, is_str := v.(string); is_str && s == "center" {
+					rule.center = true
+					continue
+				}
+				n := get_number(l, obj, key, scope, 0, -100000, 100000) or_return
+				if key == "x" { rule.x = int(n) } else { rule.y = int(n) }
+			}
+			if _, has := obj["width"]; has { rule.width = int(get_number(l, obj, "width", scope, 0, 1, 100000) or_return) }
+			if _, has := obj["height"]; has { rule.height = int(get_number(l, obj, "height", scope, 0, 1, 100000) or_return) }
+			rule.maximized = get_bool(l, obj, "maximized", scope, false) or_return
+			rule.minimized = get_bool(l, obj, "minimized", scope, false) or_return
+			rule.fullscreen = get_bool(l, obj, "fullscreen", scope, false) or_return
+			rule.sticky = get_bool(l, obj, "sticky", scope, false) or_return
+			if _, has := obj["decorations"]; has { rule.decorations = get_bool(l, obj, "decorations", scope, true) or_return }
+			if _, has := obj["focus"]; has { rule.focus = get_bool(l, obj, "focus", scope, true) or_return }
+			if _, has := obj["layer"]; has {
+				rule.layer = get_choice(l, obj, "layer", scope, "normal", RULE_LAYERS) or_return
+			} else {
+				rule.layer = strings.clone("")
+			}
 		}
 	}
 	out.rules = rules[:]
+
+	out.mode = get_choice(l, section, "mode", "wm", d.mode, WM_MODES) or_return
+	out.placement = get_choice(l, section, "placement", "wm", d.placement, WM_PLACEMENTS) or_return
+	sd := get_number(l, section, "snapDistance", "wm", f64(d.snap_distance), 0, 200) or_return
+	out.snap_distance = int(sd)
+	out.snap_layouts = get_bool(l, section, "snapLayouts", "wm", d.snap_layouts) or_return
+	rm := get_number(l, section, "resizeMargin", "wm", f64(d.resize_margin), 0, 40) or_return
+	out.resize_margin = int(rm)
+	out.focus_new = get_bool(l, section, "focusNew", "wm", d.focus_new) or_return
+	out.raise_on_focus = get_bool(l, section, "raiseOnFocus", "wm", d.raise_on_focus) or_return
+	parse_title_bar(l, section, &out.title_bar) or_return
+
+	keys := get_object(l, section, "keys", "wm") or_return
+	for key, value in keys {
+		action, is_str := value.(string)
+		if !is_str || !valid_wm_action(action) {
+			return fail(l, "wm.keys.%s must be a built-in action (e.g. \"maximize\", \"view 2\", \"exec firefox\").", key)
+		}
+		out.keys[strings.clone(key)] = strings.clone(strings.trim_space(action))
+	}
+	mouse := get_object(l, section, "mouse", "wm") or_return
+	for key, value in mouse {
+		if !valid_mouse_binding(key) {
+			return fail(l, "wm.mouse: %q must be \"context:button\" (contexts: %s; buttons: %s; modifiers before the button).",
+			            key, strings.join(MOUSE_CONTEXTS, ", ", context.temp_allocator), strings.join(MOUSE_BUTTONS, ", ", context.temp_allocator))
+		}
+		action, is_str := value.(string)
+		if !is_str || !valid_wm_action(action) { return fail(l, "wm.mouse.%s must be a built-in action.", key) }
+		if key in out.mouse {
+			old_key, old_value := delete_key(&out.mouse, key)
+			delete(old_key)
+			delete(old_value)
+		}
+		out.mouse[strings.clone(key)] = strings.clone(strings.trim_space(action))
+	}
+	if mv, present := section["menu"]; present {
+		if _, is_null := mv.(json.Null); !is_null {
+			out.menu = parse_menu_items(l, mv, "wm.menu", 0) or_return
+			out.has_menu = true
+		}
+	}
 
 	bindings := get_object(l, section, "bindings", "wm") or_return
 	for key, value in bindings {
@@ -672,6 +917,109 @@ parse_wm :: proc(l: ^Loader, root: json.Object, out: ^WM_Options) -> bool {
 		out.bindings[strings.clone(key)] = strings.clone(cmd)
 	}
 	return true
+}
+
+@(private)
+parse_title_bar :: proc(l: ^Loader, section: json.Object, out: ^Title_Bar_Options) -> bool {
+	d := default_title_bar()
+	scope :: "wm.titleBar"
+	tb := get_object(l, section, "titleBar", "wm") or_return
+	reject_unknown(l, tb, {"height", "layout", "align", "font", "fontSize", "buttonStyle", "activeColor", "inactiveColor",
+	                       "activeText", "inactiveText"}, scope) or_return
+	h := get_number(l, tb, "height", scope, f64(d.height), 16, 80) or_return
+	out.height = int(h)
+	out.layout = get_string(l, tb, "layout", scope, d.layout) or_return
+	for ch in out.layout {
+		switch ch {
+		case 'N', 'L', 'I', 'M', 'C', 'S', 'D', 'A':
+		case: return fail(l, "%s.layout: unknown letter %q (N icon, L title, I minimize, M maximize, C close, S shade, D all areas, A always on top).", scope, ch)
+		}
+	}
+	out.align = get_choice(l, tb, "align", scope, d.align, TITLE_ALIGNS) or_return
+	out.font = get_string(l, tb, "font", scope, "", true) or_return
+	fs := get_number(l, tb, "fontSize", scope, 0, 0, 64) or_return
+	out.font_size = int(fs)
+	out.button_style = get_choice(l, tb, "buttonStyle", scope, d.button_style, TITLE_BUTTON_STYLES) or_return
+	out.active_color = get_optional_color(l, tb, "activeColor", scope) or_return
+	out.inactive_color = get_optional_color(l, tb, "inactiveColor", scope) or_return
+	out.active_text = get_optional_color(l, tb, "activeText", scope) or_return
+	out.inactive_text = get_optional_color(l, tb, "inactiveText", scope) or_return
+	return true
+}
+
+// A #RRGGBB colour or null ("" = follow the theme).
+@(private)
+get_optional_color :: proc(l: ^Loader, obj: json.Object, key, scope: string) -> (color: string, ok: bool) {
+	s := get_string(l, obj, key, scope, "", true) or_return
+	if s != "" && !is_hex_color(s) {
+		delete(s)
+		return "", fail(l, "%s.%s must be a colour written as #RRGGBB, or null.", scope, key)
+	}
+	return s, true
+}
+
+@(private)
+MENU_MAX_DEPTH :: 4
+
+// wm.menu entries: {"label", "action"} | {"label", "command"} | {"separator": true} | {"label", "items": [...]}.
+@(private)
+parse_menu_items :: proc(l: ^Loader, v: json.Value, scope: string, depth: int) -> ([]Menu_Item, bool) {
+	arr, is_arr := v.(json.Array)
+	if !is_arr { return nil, fail(l, "%s must be an array of menu entries.", scope) }
+	if depth >= MENU_MAX_DEPTH { return nil, fail(l, "%s: menus nest at most %d levels deep.", scope, MENU_MAX_DEPTH) }
+	items := make([]Menu_Item, len(arr))
+	for entry, i in arr {
+		item_scope := fmt.tprintf("%s[%d]", scope, i)
+		obj, is_obj := entry.(json.Object)
+		if !is_obj {
+			destroy_menu_items(items)
+			return nil, fail(l, "%s must be an object.", item_scope)
+		}
+		ok := parse_menu_item(l, obj, item_scope, depth, &items[i])
+		if !ok {
+			destroy_menu_items(items)
+			return nil, false
+		}
+	}
+	return items, true
+}
+
+@(private)
+parse_menu_item :: proc(l: ^Loader, obj: json.Object, scope: string, depth: int, out: ^Menu_Item) -> bool {
+	reject_unknown(l, obj, {"label", "action", "command", "separator", "items"}, scope) or_return
+	out.separator = get_bool(l, obj, "separator", scope, false) or_return
+	if out.separator {
+		if len(obj) > 1 { return fail(l, "%s: a separator takes no other keys.", scope) }
+		return true
+	}
+	out.label = get_string(l, obj, "label", scope, "", false) or_return
+	if out.label == "" { return fail(l, "%s needs a label.", scope) }
+	kinds := 0
+	if _, present := obj["action"]; present {
+		kinds += 1
+		out.action = get_string(l, obj, "action", scope, "") or_return
+		if !valid_wm_action(out.action) { return fail(l, "%s.action: unknown action %q.", scope, out.action) }
+	}
+	if _, present := obj["command"]; present {
+		kinds += 1
+		out.command = get_string(l, obj, "command", scope, "") or_return
+	}
+	if iv, present := obj["items"]; present {
+		kinds += 1
+		out.items = parse_menu_items(l, iv, fmt.tprintf("%s.items", scope), depth + 1) or_return
+	}
+	if kinds != 1 { return fail(l, "%s needs exactly one of action, command or items.", scope) }
+	return true
+}
+
+destroy_menu_items :: proc(items: []Menu_Item) {
+	for &item in items {
+		delete(item.label)
+		delete(item.action)
+		delete(item.command)
+		destroy_menu_items(item.items)
+	}
+	delete(items)
 }
 
 @(private)
@@ -879,6 +1227,7 @@ destroy :: proc(cfg: ^Config) {
 	delete(cfg.linux.wallpaper_mode)
 	delete(cfg.linux.indicator.font); delete(cfg.linux.indicator.position)
 	delete(cfg.linux.shortcuts.mode); delete(cfg.linux.shortcuts.font); delete(cfg.linux.shortcuts.icon_theme); delete(cfg.linux.shortcuts.monitor)
+	delete(cfg.linux.desktop_icons.folder); delete(cfg.linux.desktop_icons.sort)
 	b := &cfg.bar
 	delete(b.position); delete(b.monitor); delete(b.override_redirect); delete(b.font); delete(b.icon_font_file); delete(b.icon_font)
 	delete(b.theme.background); delete(b.theme.foreground); delete(b.theme.muted); delete(b.theme.accent)
@@ -900,9 +1249,18 @@ destroy :: proc(cfg: ^Config) {
 	w := &cfg.wm
 	delete(w.mod_key); delete(w.terminal); delete(w.launcher); delete(w.border_color); delete(w.focus_color); delete(w.screenshot)
 	delete(w.file_manager)
-	for rule in w.rules { delete(rule.class); delete(rule.instance); delete(rule.title) }
+	for rule in w.rules { delete(rule.class); delete(rule.instance); delete(rule.title); delete(rule.layer) }
 	delete(w.rules)
 	for k, v in w.bindings { delete(k); delete(v) }
 	delete(w.bindings)
+	delete(w.mode); delete(w.placement)
+	t := &w.title_bar
+	delete(t.layout); delete(t.align); delete(t.font); delete(t.button_style)
+	delete(t.active_color); delete(t.inactive_color); delete(t.active_text); delete(t.inactive_text)
+	for k, v in w.keys { delete(k); delete(v) }
+	delete(w.keys)
+	for k, v in w.mouse { delete(k); delete(v) }
+	delete(w.mouse)
+	destroy_menu_items(w.menu)
 	free(cfg)
 }

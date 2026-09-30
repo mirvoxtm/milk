@@ -13,6 +13,7 @@ package bar
 import "core:fmt"
 import "core:log"
 import "core:math"
+import "core:slice"
 import "core:strings"
 import xlib "vendor:x11/xlib"
 import tx "../tx"
@@ -21,6 +22,7 @@ Widget_Kind :: enum {
 	Launcher,
 	Active_Window,
 	Workspaces,
+	Tasks,
 	Media,
 	Spacer,
 	Notifications,
@@ -43,6 +45,7 @@ WIDGET_IDS := [Widget_Kind]string{
 	.Launcher      = "launcher",
 	.Active_Window = "active_window",
 	.Workspaces    = "workspaces",
+	.Tasks         = "tasks",
 	.Media         = "media",
 	.Spacer        = "spacer",
 	.Notifications = "notifications",
@@ -265,8 +268,9 @@ percent_text :: proc(v: int) -> string {
 	return fmt.tprintf("%d%%", v)
 }
 
+// `tasks_limit`: the room of the task list (-1 = what it wants).
 @(private)
-measure :: proc(b: ^Bar, w: ^Widget, title_limit, media_limit: i32) {
+measure :: proc(b: ^Bar, w: ^Widget, title_limit, media_limit, tasks_limit: i32) {
 	th := &b.theme
 	w.has_icon = false
 	w.image = nil
@@ -288,6 +292,9 @@ measure :: proc(b: ^Bar, w: ^Widget, title_limit, media_limit: i32) {
 		w.pad = TEXT_PAD
 		w.w = dots + 2 * TEXT_PAD
 		w.visible = dots > 0
+		return
+	case .Tasks:
+		measure_tasks(b, w, tasks_limit)
 		return
 	case .Launcher:
 		if b.has_launcher { w.image = &b.launcher } else { w.logo = true }
@@ -402,29 +409,55 @@ layout :: proc(b: ^Bar) {
 	total := b.body.w
 	title_limit := i32(b.cfg.bar.title_max_width)
 	media_limit := i32(b.cfg.bar.title_max_width)
-	start_w, center_w, end_w: i32
+	tasks_limit := i32(-1)
+	start_w, center_w, end_w, overflow: i32
 	gap := group_gap(b)
-	for attempt in 0 ..< 3 {
-		for &w in b.widgets { measure(b, &w, title_limit, media_limit) }
+	for attempt in 0 ..< 4 {
+		for &w in b.widgets { measure(b, &w, title_limit, media_limit, tasks_limit) }
 		start_w = walk_section(b, .Start, 0, false)
 		center_w = walk_section(b, .Center, 0, false)
 		end_w = walk_section(b, .End, 0, false)
 		needed := start_w + end_w + (center_w > 0 ? center_w + 2 * gap : gap)
-		overflow := needed - (total - 2 * edge_pad(b))
-		if overflow <= 0 || attempt == 2 { break }
-		// Too wide: squeeze the window title and the media text, each in
-		// proportion to how much it can give up.
+		overflow = needed - (total - 2 * edge_pad(b))
+		if overflow <= 0 || attempt == 3 { break }
+		// Too wide: squeeze the window title, the media text and the task
+		// titles, each in proportion to how much it can give up. What they
+		// cannot give comes out of the task list (icons only, then "+N").
 		title_w := text_width_of(b, .Active_Window)
 		media_w := text_width_of(b, .Media)
-		title_slack := max(title_w - MIN_FLEX, 0)
-		media_slack := max(media_w - MIN_FLEX, 0)
-		slack := title_slack + media_slack
-		if slack <= 0 { break }
+		tasks_w := tasks_widget_width(b)
+		slacks := [3]i32{max(title_w - MIN_FLEX, 0), max(media_w - MIN_FLEX, 0), max(tasks_w - b.tasks.compact_w, 0)}
+		slack := slacks[0] + slacks[1] + slacks[2]
+		rest := max(overflow - slack, 0)
+		if slack <= 0 && tasks_w <= 0 { break } // nothing left to give
 		cut := min(overflow, slack)
-		title_cut := i32(i64(cut) * i64(title_slack) / i64(slack))
-		media_cut := cut - title_cut
-		if title_cut > 0 { title_limit = title_w - title_cut }
-		if media_cut > 0 { media_limit = media_w - media_cut }
+		cuts: [3]i32
+		if slack > 0 {
+			for v, k in slacks { cuts[k] = i32(i64(cut) * i64(v) / i64(slack)) }
+			cuts[slice.max_index(slacks[:])] += cut - (cuts[0] + cuts[1] + cuts[2]) // rounding
+		}
+		if cuts[0] > 0 { title_limit = title_w - cuts[0] }
+		if cuts[1] > 0 { media_limit = media_w - cuts[1] }
+		if tasks_w > 0 && (cuts[2] > 0 || rest > 0) { tasks_limit = max(tasks_w - cuts[2] - rest, 0) }
+	}
+	// A task list that turned into icons can free more than the titles were
+	// cut for: hand that room back to the window title and the media text
+	// (on top of their current widths, so nothing overflows again).
+	if overflow < 0 && tasks_limit >= 0 {
+		max_w := i32(b.cfg.bar.title_max_width)
+		title_w := text_width_of(b, .Active_Window)
+		media_w := text_width_of(b, .Media)
+		want := [2]i32{title_limit < max_w ? max(max_w - title_w, 0) : 0, media_limit < max_w ? max(max_w - media_w, 0) : 0}
+		if wanted := want[0] + want[1]; wanted > 0 {
+			give := min(-overflow, wanted)
+			give_title := i32(i64(give) * i64(want[0]) / i64(wanted))
+			if give_title > 0 { title_limit = title_w + give_title }
+			if give > give_title { media_limit = media_w + give - give_title }
+			for &w in b.widgets { measure(b, &w, title_limit, media_limit, tasks_limit) }
+			start_w = walk_section(b, .Start, 0, false)
+			center_w = walk_section(b, .Center, 0, false)
+			end_w = walk_section(b, .End, 0, false)
+		}
 	}
 	// The outermost items are placed by their ink, so both ends look alike
 	// whatever the glyph or image.
@@ -533,6 +566,7 @@ draw_workspaces :: proc(b: ^Bar, cv: ^tx.Canvas, w: ^Widget) {
 is_interactive :: proc(b: ^Bar, w: ^Widget) -> bool {
 	#partial switch w.kind {
 	case .Spacer, .Workspaces: return false
+	case .Tasks:               return true
 	case .Volume:              return b.vol.backend != .None || command_for(b, "volume") != ""
 	case .Brightness:          return true
 	case .Network, .Bluetooth: return true
@@ -545,6 +579,10 @@ is_interactive :: proc(b: ^Bar, w: ^Widget) -> bool {
 
 @(private)
 draw_widget_shapes :: proc(b: ^Bar, cv: ^tx.Canvas, w: ^Widget, hovered: bool) {
+	if w.kind == .Tasks {
+		draw_tasks(b, cv, w, hovered) // one hover pill per task
+		return
+	}
 	h := b.body.h
 	ox, oy := b.body.x, b.body.y
 	if hovered {
@@ -569,6 +607,10 @@ draw_widget_shapes :: proc(b: ^Bar, cv: ^tx.Canvas, w: ^Widget, hovered: bool) {
 
 @(private)
 draw_widget_text :: proc(b: ^Bar, ts: ^tx.Text_Surface, w: ^Widget) {
+	if w.kind == .Tasks {
+		draw_tasks_text(b, ts, w)
+		return
+	}
 	x := b.body.x + w.x + w.pad
 	if w.logo {
 		// The glyph centred on its ink inside the accent circle.
@@ -677,6 +719,10 @@ on_button :: proc(b: ^Bar, ev: ^xlib.XButtonEvent) {
 	}
 	w := &b.widgets[index]
 	log.debugf("Bar: button %d at x=%d on %v", i32(ev.button), ev.x, w.kind)
+	if w.kind == .Tasks {
+		tasks_button(b, w, ev) // every button acts on the task under the pointer
+		return
+	}
 	switch i32(ev.button) {
 	case 1:
 		activate(b, w, ev.x - b.body.x, ev.time)

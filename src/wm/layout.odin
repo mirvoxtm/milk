@@ -52,12 +52,12 @@ tile :: proc(m: ^Manager, mon: ^Monitor) {
 		if i < mon.nmaster {
 			rest := min(n, mon.nmaster) - i
 			h := (mon.wh - my - rest * g) / rest
-			resize(m, c, mon.wx + g, mon.wy + my, mw - 2 * c.bw, h - 2 * c.bw, false)
+			resize(m, c, mon.wx + g, mon.wy + my, mw - ext_w(c), h - ext_h(c), false)
 			if my + height(c) + g < mon.wh { my += height(c) + g }
 		} else {
 			rest := n - i
 			h := (mon.wh - ty - rest * g) / rest
-			resize(m, c, stack_x, mon.wy + ty, stack_w - 2 * c.bw, h - 2 * c.bw, false)
+			resize(m, c, stack_x, mon.wy + ty, stack_w - ext_w(c), h - ext_h(c), false)
 			if ty + height(c) + g < mon.wh { ty += height(c) + g }
 		}
 		i += 1
@@ -68,7 +68,7 @@ tile :: proc(m: ^Manager, mon: ^Monitor) {
 monocle :: proc(m: ^Manager, mon: ^Monitor) {
 	g := m.settings.gaps
 	for c := nexttiled(mon.clients); c != nil; c = nexttiled(c.next) {
-		resize(m, c, mon.wx + g, mon.wy + g, mon.ww - 2 * g - 2 * c.bw, mon.wh - 2 * g - 2 * c.bw, false)
+		resize(m, c, mon.wx + g, mon.wy + g, mon.ww - 2 * g - ext_w(c), mon.wh - 2 * g - ext_h(c), false)
 	}
 }
 
@@ -78,7 +78,7 @@ showhide :: proc(m: ^Manager, c: ^Client) {
 	if c == nil { return }
 	if is_visible(c) {
 		if !c.animating {
-			xlib.MoveWindow(m.dpy, c.win, c.x, c.y)
+			frame_move(m, c, c.x, c.y)
 			anim_sync_display(m, c)
 		}
 		if (!has_arrange(cur_layout(c.mon)) || c.isfloating) && !c.isfullscreen &&
@@ -89,7 +89,7 @@ showhide :: proc(m: ^Manager, c: ^Client) {
 	} else {
 		showhide(m, c.snext)
 		if c.animating { anim_snap(m, c) }
-		xlib.MoveWindow(m.dpy, c.win, width(c) * -2, c.y)
+		frame_move(m, c, width(c) * -2, c.y)
 		c.disp_valid = false
 	}
 }
@@ -98,14 +98,38 @@ showhide :: proc(m: ^Manager, c: ^Client) {
 // dwm stacks tiled clients right below its bar window; milk has no such
 // window in the WM, so the (unmapped) _NET_SUPPORTING_WM_CHECK window plays
 // that role: it is created on top of the stack, floating clients are raised
-// above it and tiled clients are kept below it.
+// above it and tiled clients are kept below it. milk: in the floating mode,
+// "always on top" windows stay above the others and "always below" ones under
+// them (most recently focused first within a layer).
 restack :: proc(m: ^Manager, mon: ^Monitor) {
 	if mon == nil || mon.sel == nil { return }
-	if mon.sel.isfloating || !has_arrange(cur_layout(mon)) { xlib.RaiseWindow(m.dpy, mon.sel.win) }
+	sel := mon.sel
+	if (sel.isfloating || !has_arrange(cur_layout(mon))) && sel.layer != .Below {
+		xlib.RaiseWindow(m.dpy, top_window(sel))
+		// Its dialogs stay above it.
+		for c := mon.clients; c != nil; c = c.next {
+			if c.transient_for == sel.win && is_visible(c) { xlib.RaiseWindow(m.dpy, top_window(c)) }
+		}
+	}
+	if m.settings.floating {
+		// Raised least recent first: the most recent ends up on top of its layer.
+		above := make([dynamic]^Client, context.temp_allocator)
+		for c := mon.stack; c != nil; c = c.snext {
+			if c.layer == .Above && is_visible(c) { append(&above, c) }
+		}
+		#reverse for c in above { xlib.RaiseWindow(m.dpy, top_window(c)) }
+		for c := mon.stack; c != nil; c = c.snext {
+			if c.layer == .Below && is_visible(c) { xlib.LowerWindow(m.dpy, top_window(c)) }
+		}
+		for c := mon.clients; c != nil; c = c.next {
+			if c.kind == .Desktop { xlib.LowerWindow(m.dpy, c.win) }
+		}
+		if sel.isfullscreen { xlib.RaiseWindow(m.dpy, top_window(sel)) }
+	}
 	// milk: docks and popups (splash, notification, tooltip) never take the
 	// selection, and picture-in-picture windows float over everything, so keep
 	// them above the selection, unless the selection is fullscreen.
-	if !mon.sel.isfullscreen {
+	if !sel.isfullscreen {
 		for c := mon.stack; c != nil; c = c.snext {
 			if (c.kind == .Dock || c.kind == .Popup || c.ispip) && is_visible(c) { xlib.RaiseWindow(m.dpy, c.win) }
 		}
@@ -116,11 +140,12 @@ restack :: proc(m: ^Manager, mon: ^Monitor) {
 		wc.sibling = m.wmcheckwin
 		for c := mon.stack; c != nil; c = c.snext {
 			if !c.isfloating && is_visible(c) {
-				xlib.ConfigureWindow(m.dpy, c.win, {.CWSibling, .CWStackMode}, &wc)
-				wc.sibling = c.win
+				xlib.ConfigureWindow(m.dpy, top_window(c), {.CWSibling, .CWStackMode}, &wc)
+				wc.sibling = top_window(c)
 			}
 		}
 	}
+	grips_restack(m)
 	xlib.Sync(m.dpy, false)
 	discard_enter_events(m)
 	m.ewmh.stacking_dirty = true

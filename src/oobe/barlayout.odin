@@ -20,6 +20,7 @@ BAR_WIDGET_INFO := []Bar_Widget_Info{
 	{"launcher", .Milk, "Lançador", "Launcher"},
 	{"active_window", .App_Window, "Janela ativa", "Active window"},
 	{"workspaces", .Layout_Grid, "Áreas", "Workspaces"},
+	{"tasks", .Box_Multiple, "Janelas abertas", "Open windows"},
 	{"media", .Player_Play, "Mídia", "Media"},
 	{"clipboard", .Clipboard, "Transferência", "Clipboard"},
 	{"network", .Wifi, "Rede", "Network"},
@@ -35,7 +36,7 @@ BAR_WIDGET_INFO := []Bar_Widget_Info{
 	{"spacer", .Space, "Espaço", "Spacer"},
 }
 
-@(private) SPACER_WIDGET :: 15 // index of "spacer" in BAR_WIDGET_INFO (may be used any number of times)
+@(private) SPACER_WIDGET :: 16 // index of "spacer" in BAR_WIDGET_INFO (may be used any number of times)
 
 // A ready-made arrangement; position/style "" keep the current ones.
 @(private)
@@ -249,6 +250,7 @@ draw_bar_strip :: proc(w: ^Wizard, cv: ^tx.Canvas, r: tx.Rect, zones: [3][]int, 
 		case "spacer":        return m.gap == 1 ? 4 : 8
 		case "workspaces":    return m.gap == 1 ? 34 : 44
 		case "active_window": return m.titles ? m.slot + 2 + text_width(w, w.f_small, title) : m.slot
+		case "tasks":         return task_pill_width(w, m.slot, m.titles, title) + 2 + m.slot
 		case "media":         return m.titles ? m.slot + 2 + text_width(w, w.f_small, song) : m.slot
 		case "date":          return m.date_text ? text_width(w, w.f_small, "seg 29") + 4 : m.slot
 		case "clock":         return text_width(w, w.f_small, "12:30") + 4
@@ -287,6 +289,14 @@ draw_bar_strip :: proc(w: ^Wizard, cv: ^tx.Canvas, r: tx.Rect, zones: [3][]int, 
 			case info.id == "launcher":
 				tx.canvas_fill_circle(&sub, f32(x) + f32(slot) / 2, f32(cy), f32(slot) / 2 - 1, th.accent)
 				icon(w, w.f_icon_small, {win.x, win.y, slot, win.h}, .Milk, th.accent_fg, r)
+			case info.id == "tasks":
+				// Two windows: the active one (with its title) and another.
+				pw := task_pill_width(w, slot, m.titles, title)
+				fill_rounded(&sub, {x, cy - slot / 2, pw, slot}, f32(slot) / 2, th.accent)
+				icon(w, w.f_icon_small, {win.x, win.y, slot, win.h}, .App_Window, th.accent_fg, r)
+				if m.titles { text(w, w.f_small, win.x + slot, win.y, win.h, title, th.accent_fg, r) }
+				fill_rounded(&sub, {x + pw + 2, cy - slot / 2, slot, slot}, f32(slot) / 2, th.surface)
+				icon(w, w.f_icon_small, {win.x + pw + 2, win.y, slot, win.h}, .App_Window, mix(th.fg, th.muted, 0.15), r)
 			case info.id == "workspaces":
 				fill_rounded(&sub, {x + 2, cy - 3, 14, 6}, 3, th.accent)
 				step: i32 = m.gap == 1 ? 6 : 8
@@ -303,6 +313,12 @@ draw_bar_strip :: proc(w: ^Wizard, cv: ^tx.Canvas, r: tx.Rect, zones: [3][]int, 
 		}
 	}
 	composite_rounded(cv, sub, r.x, r.y, corner)
+}
+
+// The active task's pill in the preview: its icon, and its title in the roomier modes.
+@(private)
+task_pill_width :: proc(w: ^Wizard, slot: i32, titles: bool, title: string) -> i32 {
+	return titles ? slot + text_width(w, w.f_small, title) + 6 : slot
 }
 
 @(private)

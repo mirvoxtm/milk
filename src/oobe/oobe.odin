@@ -36,9 +36,9 @@ PENDING_NAME :: ".setup-pending"
 ALACRITTY_ENV :: "MILK_ALACRITTY_CONFIG"
 
 // Shown on the settings' About page; main may set it to its own version.
-app_version := "0.1.0"
+app_version := "1.1.0"
 
-@(private) Page :: enum { Welcome, Theme, Keyboard, Wallpaper, Bar, Summary }
+@(private) Page :: enum { Welcome, Theme, Keyboard, Wallpaper, Bar, Windows, Summary }
 
 @(private) Mode :: enum { Wizard, Settings }
 
@@ -52,14 +52,15 @@ Action :: enum {
 	Wp_Mode, Wp_Area, Wp_Tile,
 	Bar_Choice,
 	// Settings app
-	Section, Step, Toggle, Choice, Text_Field, Rerun_Wizard, Open_Config, Fx_Open,
-	Sc_Add, Sc_Edit, Sc_Delete, Sc_Capture, Sc_Kind, Sc_App, Sc_Save, Sc_Cancel, Sc_Builtin,
+	Wm_Choice, Di_Choice, // wizard: tiling/floating, desktop icons
+	Section, Step, Toggle, Choice, Text_Field, Rerun_Wizard, Open_Config, Fx_Open, Win_Tab,
+	Sc_Add, Sc_Edit, Sc_Delete, Sc_Capture, Sc_Kind, Sc_App, Sc_Save, Sc_Cancel, Sc_Builtin, Sc_Action,
 	Th_New, Th_Edit, Th_Slot, Th_Variant, Th_Slider, Th_Swatch, Th_Save, Th_Cancel, Th_Delete,
 	Bar_Tab, Bar_Preset, Lw_Select, Lw_Move, Lw_Remove, Lw_Add,
 	Language,
 }
 
-@(private) Scroll_Id :: enum { None, Layouts, Variants, Wallpapers, Shortcuts, Apps, Themes, Zone_Start, Zone_Center, Zone_End, Zone_Avail }
+@(private) Scroll_Id :: enum { None, Layouts, Variants, Wallpapers, Shortcuts, Apps, Actions, Themes, Zone_Start, Zone_Center, Zone_End, Zone_Avail }
 
 @(private) Field :: enum { None, Search, Test, Text }
 
@@ -136,6 +137,8 @@ Wizard :: struct {
 	scroll_themes: i32,
 	bar_top:      bool,
 	bar_floating: bool,
+	wm_floating:  bool, // wm.mode
+	desktop_icons: bool, // linux.desktopIcons.enabled
 	areas:        [dynamic]int, // workspace numbers from milk.json, sorted
 	wp_per_area:  bool,
 	wp_tab:       int,          // index into areas
@@ -247,6 +250,8 @@ wizard_setup :: proc(w: ^Wizard, c: ^tx.Connection, cfg: ^config.Config, config_
 	}
 	w.bar_top = cfg.bar.position != "bottom"
 	w.bar_floating = cfg.bar.style == "floating"
+	w.wm_floating = cfg.wm.mode == "floating"
+	w.desktop_icons = cfg.linux.desktop_icons.enabled
 	// Every area the window manager has (one per tag, 9 by default), plus any
 	// other area milk.json configures.
 	for n in 1 ..= max(cfg.wm.tag_count, 1) { append(&w.areas, n) }
@@ -495,6 +500,7 @@ scroll_ptr :: proc(w: ^Wizard, id: Scroll_Id) -> ^i32 {
 	case .Wallpapers: return &w.scroll_wp
 	case .Shortcuts:  return &w.set.sc.scroll
 	case .Apps:       return &w.set.sc.ed.scroll_apps
+	case .Actions:    return &w.set.sc.ed.scroll_actions
 	case .Themes:     return &w.scroll_themes
 	case .Zone_Start: return &w.set.lay.scroll[0]
 	case .Zone_Center: return &w.set.lay.scroll[1]
@@ -524,7 +530,7 @@ on_keyboard_page :: proc(w: ^Wizard) -> bool {
 @(private)
 shows_thumbnails :: proc(w: ^Wizard) -> bool {
 	if w.mode == .Settings { return w.set.section == .Wallpapers }
-	return w.page == .Wallpaper || w.page == .Bar || w.page == .Summary
+	return w.page == .Wallpaper || w.page == .Bar || w.page == .Windows || w.page == .Summary
 }
 
 @(private)
@@ -587,9 +593,15 @@ do_action :: proc(w: ^Wizard, action: Action, arg: int) {
 		w.bar_floating = arg % 2 == 1
 		w.dirty = true
 		settings_changed(w, .Bar_Layout)
-	case .Section, .Step, .Toggle, .Choice, .Text_Field, .Rerun_Wizard, .Open_Config, .Fx_Open:
+	case .Wm_Choice:
+		w.wm_floating = arg == 1
+		w.dirty = true
+	case .Di_Choice:
+		w.desktop_icons = !w.desktop_icons
+		w.dirty = true
+	case .Section, .Step, .Toggle, .Choice, .Text_Field, .Rerun_Wizard, .Open_Config, .Fx_Open, .Win_Tab:
 		settings_action(w, action, arg)
-	case .Sc_Add, .Sc_Edit, .Sc_Delete, .Sc_Capture, .Sc_Kind, .Sc_App, .Sc_Save, .Sc_Cancel, .Sc_Builtin:
+	case .Sc_Add, .Sc_Edit, .Sc_Delete, .Sc_Capture, .Sc_Kind, .Sc_App, .Sc_Save, .Sc_Cancel, .Sc_Builtin, .Sc_Action:
 		shortcuts_action(w, action, arg)
 	case .Th_New, .Th_Edit, .Th_Slot, .Th_Variant, .Th_Slider, .Th_Swatch, .Th_Save, .Th_Cancel, .Th_Delete:
 		themes_action(w, action, arg)

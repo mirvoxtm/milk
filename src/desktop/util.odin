@@ -40,10 +40,14 @@ config_home :: proc() -> string {
 	return xdg_env_dir("XDG_CONFIG_HOME", join_path({home_dir(), ".config"}))
 }
 
+data_home :: proc() -> string {
+	return xdg_env_dir("XDG_DATA_HOME", join_path({home_dir(), ".local", "share"}))
+}
+
 // $XDG_DATA_HOME followed by $XDG_DATA_DIRS (defaults from the Base Directory spec).
 data_dirs :: proc(allocator := context.temp_allocator) -> []string {
 	out := make([dynamic]string, allocator)
-	append(&out, xdg_env_dir("XDG_DATA_HOME", join_path({home_dir(), ".local", "share"})))
+	append(&out, data_home())
 	dirs := xdg_env_dir("XDG_DATA_DIRS", "/usr/local/share:/usr/share")
 	for d in strings.split(dirs, ":", context.temp_allocator) {
 		if d != "" { append(&out, d) }

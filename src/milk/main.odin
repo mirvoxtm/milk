@@ -29,7 +29,7 @@ import oobe "../oobe"
 import tx "../tx"
 import wm "../wm"
 
-VERSION  :: "0.1.0"
+VERSION  :: "1.1.0"
 
 // filepath.join returns an allocator error too; milk never runs out of memory here.
 join :: proc(elems: []string, allocator := context.temp_allocator) -> string {
@@ -66,7 +66,7 @@ commands:
   reload       re-read milk.json in the running instance
   test         print diagnostics (active area, wallpaper, shortcuts, window manager)
   setup        run the setup wizard (theme, wallpapers, bar, keyboard) now
-  settings     open the settings app
+  settings     open the settings app (optionally on a section: wallpapers, windows, desktop...)
   switch N     ask the window manager to activate area N
   version      print the version
 
@@ -610,6 +610,8 @@ loop :: proc(r: ^Runner) {
 					notify.toggle_panel(r.notes)
 				}
 			}
+			// The root menu's entries for the desktop icons.
+			if req := wm.desktop_requested(r.manager); req != "" { desktop.request(r.daemon, req) }
 		}
 		if r.bar != nil && bar.reload_requested(r.bar) { g_reload = true }
 		if g_reload {
@@ -654,6 +656,8 @@ loop :: proc(r: ^Runner) {
 			for fd in bar.poll_fds(r.bar) { append(&fds, posix.pollfd{fd = posix.FD(fd), events = {.IN}}) }
 			bar_fds = len(fds) - 2
 		}
+		for fd in desktop.poll_fds(r.daemon) { append(&fds, posix.pollfd{fd = posix.FD(fd), events = {.IN}}) }
+		desktop_fds := len(fds) - 2 - bar_fds
 		if r.notes != nil {
 			for fd in notify.poll_fds(r.notes) { append(&fds, posix.pollfd{fd = posix.FD(fd), events = {.IN}}) }
 		}
@@ -671,6 +675,8 @@ loop :: proc(r: ^Runner) {
 			if pf.revents == {} { continue }
 			if i < bar_fds {
 				if r.bar != nil { bar.handle_fd(r.bar, i32(pf.fd)) }
+			} else if i < bar_fds + desktop_fds {
+				desktop.handle_fd(r.daemon, i32(pf.fd))
 			} else if r.notes != nil {
 				notify.handle_fd(r.notes, i32(pf.fd))
 			}
@@ -783,7 +789,7 @@ cmd_settings :: proc(opts: ^Options) -> int {
 	context.logger = make_logger(opts)
 	if !os.is_directory(opts.runtime_root) { os.make_directory_all(opts.runtime_root) }
 	oobe.app_version = VERSION
-	oobe.run_settings(c, opts.config_path, opts.runtime_root)
+	oobe.run_settings(c, opts.config_path, opts.runtime_root, opts.value)
 	return 0
 }
 

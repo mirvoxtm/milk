@@ -12,7 +12,8 @@ createmon :: proc(m: ^Manager) -> ^Monitor {
 	mon.tagset = {1, 1}
 	mon.mfact = m.settings.mfact
 	mon.nmaster = m.settings.nmaster
-	mon.lt = {.Tile, .Float}
+	// The floating mode lays nothing out: dwm's floating layout, with frames.
+	mon.lt = m.settings.floating ? {.Float, .Tile} : {.Tile, .Float}
 	return mon
 }
 

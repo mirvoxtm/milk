@@ -4,6 +4,7 @@
 package wm
 
 import xlib "vendor:x11/xlib"
+import tx "../tx"
 
 // Give the selection and the input focus to `c`, or to the most recently
 // focused visible client of the selected monitor when `c` is nil/hidden.
@@ -26,8 +27,13 @@ focus :: proc(m: ^Manager, client: ^Client) {
 		detachstack(c)
 		attachstack(c)
 		grabbuttons(m, c, true)
-		xlib.SetWindowBorder(m.dpy, c.win, m.pixel[.Sel])
+		if c.frame != 0 {
+			frame_set_active(m, c, true)
+		} else {
+			xlib.SetWindowBorder(m.dpy, c.win, m.pixel[.Sel])
+		}
 		setfocus(m, c)
+		if m.showing_desktop { m.showing_desktop = false; tx.set_cardinals(m.c, m.root, "_NET_SHOWING_DESKTOP", {0}) }
 	} else {
 		xlib.SetInputFocus(m.dpy, m.root, .RevertToPointerRoot, xlib.CurrentTime)
 		xlib.DeleteProperty(m.dpy, m.root, m.atoms.net_active_window)
@@ -38,7 +44,11 @@ focus :: proc(m: ^Manager, client: ^Client) {
 unfocus :: proc(m: ^Manager, c: ^Client, setfocus_root: bool) {
 	if c == nil { return }
 	grabbuttons(m, c, false)
-	xlib.SetWindowBorder(m.dpy, c.win, m.pixel[.Norm])
+	if c.frame != 0 {
+		frame_set_active(m, c, false)
+	} else {
+		xlib.SetWindowBorder(m.dpy, c.win, m.pixel[.Norm])
+	}
 	if setfocus_root {
 		xlib.SetInputFocus(m.dpy, m.root, .RevertToPointerRoot, xlib.CurrentTime)
 		xlib.DeleteProperty(m.dpy, m.root, m.atoms.net_active_window)
@@ -148,6 +158,10 @@ tag :: proc(m: ^Manager, arg: ^Arg) {
 	sel := m.selmon.sel
 	mask := tagmask(m)
 	if sel != nil && !sel.ispip && arg.ui & mask != 0 { // PiP windows stay on every tag
+		if sel.sticky {
+			sel.sticky = false
+			write_state_atom(m, sel, m.atoms.net_wm_state_sticky, false)
+		}
 		sel.tags = arg.ui & mask
 		focus(m, nil)
 		arrange(m, m.selmon)

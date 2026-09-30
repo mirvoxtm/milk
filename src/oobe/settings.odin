@@ -23,7 +23,7 @@ import tx "../tx"
 @(private) NOTICE_TIME :: 2.2
 
 @(private)
-Section :: enum { Appearance, Wallpapers, Bar, Windows, Effects, Shortcuts, Keyboard, Notifications, Clipboard, Areas, About }
+Section :: enum { Appearance, Wallpapers, Bar, Windows, Desktop, Effects, Shortcuts, Keyboard, Notifications, Clipboard, Areas, About }
 
 // What a change touched (decides which keys are written and how soon).
 @(private)
@@ -41,6 +41,10 @@ Control :: enum {
 	Area_Name, // + area index
 	Th_Name, Th_Hex, // theme editor: name, hex field (+ Theme_Slot)
 	Sc_Command, Sc_Site, Sc_Search,
+	// windows.odin
+	Wm_Mode, Wm_Title_Style, Wm_Title_Side, Wm_Title_Align, Wm_Title_Height, Wm_Placement, Wm_Snap_Layouts,
+	Wm_Snap_Distance, Wm_Raise_Focus,
+	Di_Enabled, Di_Shortcut_Mode, Di_Size, Di_Single, Di_Thumbs, Di_Hidden, Di_Sort,
 }
 
 @(private) ANIM_SCALES :: [4]f64{0, 0.5, 1, 1.5}
@@ -70,6 +74,24 @@ Settings :: struct {
 	clip_persist:   bool,
 	clip_max:       int,
 	fx_enabled:     bool,                 // compositor.enabled (lactase; see compositor.odin)
+	// Janelas and Área de trabalho (windows.odin).
+	wm_floating:    bool,
+	win_tab:        int, // floating mode: 0 general, 1 title bar, 2 behaviour
+	title_circles:  bool,
+	title_left:     bool,
+	title_center:   bool,
+	title_height:   int,
+	placement:      int, // PLACEMENT_NAMES
+	snap_layouts:   bool,
+	snap_distance:  int,
+	raise_focus:    bool,
+	di_enabled:     bool,
+	di_thumbs:      bool,
+	di_hidden:      bool,
+	di_sort:        int, // SORT_NAMES
+	di_size:        int,
+	di_single:      bool,
+	sc_mode:        int, // SHORTCUT_MODE_NAMES
 	fx_poll:        f64,
 	fx_children:    [dynamic]posix.pid_t, // lactase settings apps not reaped yet
 	names:          [dynamic][dynamic]u8,
@@ -89,9 +111,10 @@ Settings :: struct {
 	notice_until:   f64,
 }
 
-// Open the settings window and block until it is closed. Returns true when
-// something was saved to milk.json.
-run_settings :: proc(c: ^tx.Connection, config_path: string, runtime_root: string) -> bool {
+// Open the settings window (on `section`, a Section name in lower case:
+// "wallpapers", "windows"...; "" = the first) and block until it is closed.
+// Returns true when something was saved to milk.json.
+run_settings :: proc(c: ^tx.Connection, config_path: string, runtime_root: string, section := "") -> bool {
 	if c == nil {
 		log.error("Settings: no X connection")
 		return false
@@ -117,6 +140,9 @@ run_settings :: proc(c: ^tx.Connection, config_path: string, runtime_root: strin
 	wizard_setup(w, c, cfg, config_path, runtime_root, .Settings)
 	defer wizard_destroy(w)
 	settings_load_values(w)
+	for sec in Section {
+		if section != "" && strings.equal_fold(fmt.tprintf("%v", sec), section) { w.set.section = sec }
+	}
 	if !settings_open_window(w) { return false }
 	wizard_loop(w)
 	if w.set.save_at > 0 { settings_save(w) }
@@ -150,6 +176,7 @@ settings_load_values :: proc(w: ^Wizard) {
 	s.clip_persist = cfg.clipboard.persist
 	s.clip_max = cfg.clipboard.max_items
 	s.fx_enabled = cfg.compositor.enabled
+	windows_load_values(w)
 	for n in w.areas {
 		name: [dynamic]u8
 		if ws, ok := cfg.workspaces[n]; ok { append(&name, ..transmute([]u8)ws.name) }
@@ -271,9 +298,11 @@ section_info :: proc(w: ^Wizard, s: Section) -> (icon: Icon, title, desc: string
 	case .Effects:
 		return .Sparkles, tr(w, "Efeitos", "Effects"), tr(w, "Sombras, animações e transparência com o lactase, o compositor do milk.", "Shadows, animations and transparency with lactase, milk's compositor.")
 	case .Windows:
-		return .App_Window, tr(w, "Janelas", "Windows"), tr(w, "Espaçamento, bordas e animações. As cores das bordas seguem o tema.", "Gaps, borders and animations. Border colours follow the theme.")
+		return .App_Window, tr(w, "Janelas", "Windows"), tr(w, "Lado a lado ou flutuantes, bordas, barra de título e animações.", "Tiling or floating, borders, title bars and animations.")
+	case .Desktop:
+		return .Desktop, tr(w, "Área de trabalho", "Desktop"), tr(w, "Ícones de arquivos e atalhos sobre o papel de parede.", "File and shortcut icons over the wallpaper.")
 	case .Shortcuts:
-		return .Command, tr(w, "Atalhos", "Shortcuts"), tr(w, "Combinações de teclas para abrir aplicativos, comandos e sites.", "Key combinations that open applications, commands and sites.")
+		return .Command, tr(w, "Atalhos", "Shortcuts"), tr(w, "Combinações de teclas para aplicativos, comandos, sites e ações das janelas.", "Key combinations for applications, commands, sites and window actions.")
 	case .Keyboard:
 		return .Keyboard, tr(w, "Idioma e teclado", "Language and keyboard"), tr(w, "Idioma do milk, layout e variante do teclado, aplicados na hora.", "milk's language and the keyboard layout and variant, applied at once.")
 	case .Notifications:
@@ -324,8 +353,10 @@ draw_settings :: proc(w: ^Wizard, cv: ^tx.Canvas) {
 			rows_bar(w, cv, body, &ry)
 		}
 	case .Windows:
+		draw_windows_section(w, cv, c)
+	case .Desktop:
 		ry := c.y
-		rows_windows(w, cv, c, &ry)
+		rows_desktop(w, cv, c, &ry)
 	case .Effects:
 		draw_effects_page(w, cv, c)
 	case .Shortcuts:
@@ -639,8 +670,12 @@ settings_action :: proc(w: ^Wizard, action: Action, arg: int) {
 		case .Notif_Position:
 			s.notif_position = opt
 			set_edit(w, "notifications.position", json.String(opt == 1 ? "bottom-right" : "top-right"))
+		case:
+			if !windows_choice(w, ctrl, opt) { return }
 		}
 		settings_changed(w, .Values)
+	case .Win_Tab:
+		s.win_tab = clamp(arg, 0, 2)
 	case .Text_Field:
 		w.focus = .Text
 		s.text_target = arg
@@ -700,7 +735,7 @@ step_control :: proc(w: ^Wizard, ctrl: Control, dir: int) {
 		s.clip_max = clamp(s.clip_max + 10 * dir, 10, 500)
 		set_edit(w, "clipboard.maxItems", json.Integer(s.clip_max))
 	case:
-		return
+		if !windows_step(w, ctrl, dir) { return }
 	}
 	settings_changed(w, .Values)
 }
@@ -728,7 +763,7 @@ toggle_control :: proc(w: ^Wizard, ctrl: Control) {
 		s.fx_enabled = !s.fx_enabled
 		set_edit(w, "compositor.enabled", json.Boolean(s.fx_enabled))
 	case:
-		return
+		if !windows_toggle(w, ctrl) { return }
 	}
 	settings_changed(w, .Values)
 }
@@ -966,10 +1001,14 @@ write_edits :: proc(w: ^Wizard) -> bool {
 		json_set(&root, strings.split(key, ".", context.temp_allocator), v)
 	}
 	if w.set.sc.dirty {
-		// wm.bindings is rewritten whole: removed shortcuts must disappear.
+		// wm.bindings and wm.keys are rewritten whole: removed shortcuts must disappear.
 		bindings := make(json.Object, context.temp_allocator)
-		for r in w.set.sc.rows { bindings[r.spec] = json.String(r.command) }
+		keys := make(json.Object, context.temp_allocator)
+		for r in w.set.sc.rows {
+			if r.action { keys[r.spec] = json.String(r.command) } else { bindings[r.spec] = json.String(r.command) }
+		}
 		json_set(&root, {"wm", "bindings"}, bindings)
+		json_set(&root, {"wm", "keys"}, keys)
 	}
 	if w.set.themes_dirty {
 		// Rewritten whole too: renamed and deleted themes must disappear.

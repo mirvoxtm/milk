@@ -21,6 +21,7 @@ import "core:strings"
 import "core:sys/posix"
 import xlib "vendor:x11/xlib"
 import config "../config"
+import menu "../menu"
 import tx "../tx"
 
 ROOT_EVENT_MASK :: xlib.EventMask{.SubstructureRedirect, .SubstructureNotify, .ButtonPress, .PointerMotion,
@@ -82,6 +83,22 @@ Manager :: struct {
 	reserved:      Reservation,
 	ewmh:          Ewmh_Cache,
 	cm:            Compositor_Watch, // see compositor.odin
+	// Floating mode and the tools shared with the tiling mode.
+	decor:           Decor,               // title bar font (frame.odin)
+	menu:            menu.Menu,           // the open menu (menus.odin)
+	menu_entries:    [dynamic]Menu_Entry, // what the entries of the open menu do
+	switcher:        Switcher,            // Alt+Tab (switcher.odin)
+	showing_desktop: bool,
+	desktop_hidden:  [dynamic]xlib.Window, // minimized by "show desktop"
+	desktop_request: string, // a root menu action for the desktop icons (static strings)
+	cascade_x, cascade_y: i32,            // wm.placement "cascade"
+	snap_preview:    xlib.Window,         // outline of a snap layout while dragging
+	ev_ctx:          Action_Ctx,          // the event that triggers the current binding
+	ev_client:       ^Client,
+	last_click_window: xlib.Window,       // double clicks on title bars
+	last_click_button: u32,
+	last_click_time:   xlib.Time,
+	last_click_x, last_click_y: i32,
 }
 
 // The compositor selection as the window manager follows it (compositor.odin).
@@ -143,6 +160,8 @@ create :: proc(c: ^tx.Connection, cfg: ^config.Config) -> (^Manager, bool) {
 	m.keys = make([dynamic]Key)
 	m.buttons = make([dynamic]Button)
 	m.children = make([dynamic]posix.pid_t)
+	m.menu_entries = make([dynamic]Menu_Entry)
+	m.desktop_hidden = make([dynamic]xlib.Window)
 	m.reserved.monitor = strings.clone("primary")
 	ewmh_init(m)
 	return m, true
@@ -158,6 +177,12 @@ destroy :: proc(m: ^Manager) {
 		anim_finish_all(m)
 		cleanup(m)
 	}
+	menu.destroy(&m.menu)
+	switcher_destroy(m)
+	if m.snap_preview != 0 { xlib.DestroyWindow(m.dpy, m.snap_preview) }
+	decor_destroy(m)
+	delete(m.menu_entries)
+	delete(m.desktop_hidden)
 	reap_children(m)
 	delete(m.children)
 	delete(m.keys)
@@ -211,6 +236,7 @@ start :: proc(m: ^Manager) {
 	m.cursor[.Move] = xlib.CreateFontCursor(m.dpy, .XC_fleur)
 	create_dir_cursors(m)
 	alloc_colours(m)
+	decor_setup(m)
 	build_bindings(m)
 	ewmh_setup(m)
 
@@ -239,6 +265,17 @@ handle_event :: proc(m: ^Manager, ev: ^xlib.XEvent) -> bool {
 	if m == nil || !m.started || ev == nil { return false }
 	context.allocator = m.allocator
 	if compositor_event(m, ev) { return true }
+	if menu.is_open(&m.menu) && menu.handle_event(&m.menu, ev) {
+		if id, ok := menu.take_result(&m.menu); ok { menu_dispatch(m, id) }
+		ewmh_sync(m)
+		return true
+	}
+	if (ev.type == .KeyPress || ev.type == .KeyRelease) && switcher_key(m, ev) { return true }
+	if ev.type == .ButtonPress && switcher_button(m, &ev.xbutton) { return true }
+	if frame_event(m, ev) {
+		ewmh_sync(m)
+		return true
+	}
 	consumed := false
 	#partial switch ev.type {
 	case .ButtonPress:      consumed = buttonpress(m, ev)
@@ -276,15 +313,22 @@ next_timeout :: proc(m: ^Manager, now: f64) -> f64 {
 }
 
 // Apply a new configuration: colours, borders, gaps, master area, tags, keys,
-// rules and desktop names. The caller owns `cfg`; nothing of it is kept.
+// rules, desktop names and the mode (tiling or floating). The caller owns
+// `cfg`; nothing of it is kept.
 reload :: proc(m: ^Manager, cfg: ^config.Config) {
 	if m == nil || cfg == nil { return }
 	context.allocator = m.allocator
+	// Menus and the switcher borrow strings from the settings being replaced.
+	menu.close(&m.menu)
+	clear(&m.menu_entries)
+	switcher_finish(m, false)
 	old := m.settings
 	m.settings = settings_from_config(cfg)
 	defer settings_destroy(&old)
 	if !m.started { return }
 	s := &m.settings
+	decor_setup(m)
+	if s.floating != old.floating { switch_mode(m) }
 
 	alloc_colours(m)
 	mask := tagmask(m)
@@ -301,7 +345,17 @@ reload :: proc(m: ^Manager, cfg: ^config.Config) {
 			if c.tags == 0 { c.tags = mon.tagset[mon.seltags] }
 			// PiP windows, docks and desktops stay borderless and on every tag.
 			borderless := c.ispip || c.kind == .Dock || c.kind == .Desktop
-			if borderless { c.tags = mask }
+			if borderless || c.sticky { c.tags = mask }
+			if c.frame != 0 {
+				// Framed: the border is part of the frame.
+				c.title_w = 0
+				frame_refresh(m, c)
+				grip_update(m, c)
+				if c.has_icon { load_icon(m, c) }
+				xlib.SetWindowBackground(m.dpy, c.frame, m.pixel[.Norm])
+				xlib.ClearWindow(m.dpy, c.frame)
+				continue
+			}
 			if c.isfullscreen {
 				if !borderless { c.fsbw = s.border_width }
 			} else if !borderless && c.bw != s.border_width {
@@ -339,6 +393,15 @@ window_ids :: proc(m: ^Manager, allocator := context.temp_allocator) -> []xlib.W
 // Mod+Shift+q was pressed.
 quit_requested :: proc(m: ^Manager) -> bool {
 	return m != nil && m.quit
+}
+
+// A root menu action for the desktop icons ("desktop-new-folder",
+// "desktop-arrange", "desktop-open-folder"); "" when none. Cleared by the call.
+desktop_requested :: proc(m: ^Manager) -> string {
+	if m == nil { return "" }
+	req := m.desktop_request
+	m.desktop_request = ""
+	return req
 }
 
 // Mod+Shift+r was pressed (the flag is cleared by this call).
@@ -437,6 +500,11 @@ cleanup :: proc(m: ^Manager) {
 	}
 	// dwm's "foo" layout: nothing is re-tiled while the clients are released.
 	for mon := m.mons; mon != nil; mon = mon.next { mon.lt[mon.sellt] = .Float }
+	// Bottom first: a framed window taken out of its frame lands on top, so
+	// the stacking order survives for the next window manager.
+	for w in tx.root_children(m.c) {
+		if c := wintoclient(m, w); c != nil { unmanage(m, c, false) }
+	}
 	for mon := m.mons; mon != nil; mon = mon.next {
 		for mon.stack != nil { unmanage(m, mon.stack, false) }
 	}

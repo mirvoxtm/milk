@@ -91,6 +91,7 @@ Bar :: struct {
 	// State
 	ws:              Workspaces_State,
 	active:          Active_State,
+	tasks:           Tasks_State,
 	media:           Media_State,
 	net:             Network_State,
 	bt:              Bluetooth_State,
@@ -171,6 +172,8 @@ create :: proc(c: ^tx.Connection, cfg: ^config.Config) -> (^Bar, bool) {
 	b.allocator = context.allocator
 	b.hover = -1
 	b.ws.current = -1
+	b.tasks.hover = -1
+	b.tasks.pointer_x = -1
 	intern_atoms(b)
 	detect_tools(b)
 	if !apply_config(b) {
@@ -200,6 +203,7 @@ destroy :: proc(b: ^Bar) {
 	delete(b.children)
 	unwatch_active(b)
 	clear_active(b)
+	tasks_destroy(b)
 	hide_window(b)
 	release_look(b)
 	delete(b.widgets)
@@ -225,6 +229,7 @@ start :: proc(b: ^Bar) {
 	now := tx.now()
 	refresh_active(b)
 	refresh_workspaces(b)
+	tasks_update(b)
 	b.net = read_network()
 	b.bt = read_bluetooth()
 	b.bat = read_battery()
@@ -249,6 +254,9 @@ handle_event :: proc(b: ^Bar, ev: ^xlib.XEvent) -> bool {
 	if ev.type == .ButtonPress && popup_open(b) && win != b.win && !is_popup_window(b, win) {
 		close_popups(b)
 	}
+	// Titles, states and areas of the listed windows (shared with the window
+	// manager, so never claimed).
+	if ev.type == .PropertyNotify && win != b.c.root { tasks_property(b, win, ev.xproperty.atom) }
 	// While the slider is dragged the pointer may cross the bar window (same
 	// client, so the grab reports it there): keep following it.
 	if b.slider.dragging && win != b.slider.card.win && (ev.type == .MotionNotify || ev.type == .ButtonRelease) {
@@ -300,7 +308,9 @@ tick :: proc(b: ^Bar, now: f64) {
 	if b.occupancy_dirty {
 		b.occupancy_dirty = false
 		if refresh_workspaces(b) { b.dirty = true }
+		b.tasks.recheck = true // the current area (or a learned one) may have changed
 	}
+	if (b.tasks.stale || b.tasks.recheck) && tasks_update(b) { b.dirty = true }
 	if b.wm_dirty {
 		b.wm_dirty = false
 		if b.win != 0 && use_overlay(b) != b.overlay {
@@ -323,7 +333,7 @@ tick :: proc(b: ^Bar, now: f64) {
 // Seconds until `tick` has work to do (0 = now).
 next_timeout :: proc(b: ^Bar, now: f64) -> f64 {
 	if b == nil || !b.started { return -1 }
-	if (b.dirty && b.mapped) || b.occupancy_dirty || b.wm_dirty { return 0 }
+	if (b.dirty && b.mapped) || b.occupancy_dirty || b.wm_dirty || b.tasks.stale || b.tasks.recheck { return 0 }
 	deadline := min(b.next_poll, b.next_clock)
 	if d := media_deadline(b); d >= 0 { deadline = min(deadline, d) }
 	if b.popup_wait >= 0 { deadline = min(deadline, now + b.popup_wait) }
@@ -442,6 +452,7 @@ apply_config :: proc(b: ^Bar) -> bool {
 	resolve_icons(b)
 	load_launcher(b)
 	build_widgets(b)
+	tasks_configure(b)
 	b.vol.backend = pick_volume_backend(b)
 	b.hover = -1
 	b.dirty = true
@@ -662,8 +673,10 @@ handle_bar_event :: proc(b: ^Bar, ev: ^xlib.XEvent) {
 		on_button(b, &ev.xbutton)
 	case .MotionNotify:
 		set_hover(b, hit_widget(b, ev.xmotion.x))
+		tasks_pointer(b, ev.xmotion.x)
 	case .LeaveNotify:
 		set_hover(b, -1)
+		tasks_pointer(b, -1)
 	}
 }
 
@@ -676,7 +689,10 @@ handle_root_event :: proc(b: ^Bar, ev: ^xlib.XEvent) {
 		case a.active_window:
 			if refresh_active(b) { b.dirty = true }
 			keep_above(b, 0)
-		case a.current_desktop, a.number_of_desktops, a.client_list, a.desktop_names:
+		case a.client_list:
+			b.occupancy_dirty = true
+			b.tasks.stale = b.tasks.enabled
+		case a.current_desktop, a.number_of_desktops, a.desktop_names:
 			b.occupancy_dirty = true
 		case a.root_pixmap, a.eroot_pixmap:
 			if b.win != 0 { update_base(b) }
@@ -692,6 +708,7 @@ handle_root_event :: proc(b: ^Bar, ev: ^xlib.XEvent) {
 		if ev.xunmap.window != b.win { b.occupancy_dirty = true }
 	case .DestroyNotify:
 		if ev.xdestroywindow.window == b.active.win { b.active.watching = false }
+		tasks_window_destroyed(b, ev.xdestroywindow.window)
 		b.occupancy_dirty = true
 	case .ConfigureNotify:
 		cfg := &ev.xconfigure

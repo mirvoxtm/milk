@@ -11,8 +11,10 @@ import tx "../tx"
 
 // Root-window events the daemon needs: property changes (active desktop,
 // wallpaper pixmap, work area), top-level window changes (restacking, bars
-// appearing) and the root's own geometry (screen size changes).
-ROOT_EVENT_MASK :: xlib.EventMask{.PropertyChange, .SubstructureNotify, .StructureNotify}
+// appearing), the root's own geometry (screen size changes) and keys typed
+// while the desktop has the focus. Clicks on the empty desktop reach it only
+// through milk's window manager, which selects them on the root window.
+ROOT_EVENT_MASK :: xlib.EventMask{.PropertyChange, .SubstructureNotify, .StructureNotify, .KeyPress}
 
 // The active desktop, 1-based like the Windows implementation.
 current_desktop_index :: proc(c: ^tx.Connection) -> (int, bool) {
@@ -30,24 +32,48 @@ desktop_count :: proc(c: ^tx.Connection) -> int {
 
 // Process one X event. Returns true when the event concerned one of our own
 // windows; root-window notifications are acted upon but reported as false,
-// since other components (the bar) need them too.
+// since other components (the bar, the window manager) need them too.
 handle_event :: proc(d: ^Daemon, ev: ^xlib.XEvent) -> bool {
 	context.allocator = d.allocator
 	c := d.c
+	#partial switch ev.type {
+	case .ButtonPress, .ButtonRelease: d.last_time = ev.xbutton.time
+	case .KeyPress:                    d.last_time = ev.xkey.time
+	}
+	if desktop_menu_event(d, ev) || rename_event(d, ev) || clipboard_event(d, ev) { return true }
 	#partial switch ev.type {
 	case .PropertyNotify:
 		if ev.xproperty.window == c.root { on_root_property(d, &ev.xproperty) }
 		return false
 
 	case .ButtonPress, .ButtonRelease:
-		win := ev.xbutton.window
-		if idx := layer_cell_index(d, win); idx >= 0 {
-			if ev.type == .ButtonPress { layer_on_button(d, idx, &ev.xbutton) }
+		be := &ev.xbutton
+		if idx := layer_cell_index(d, be.window); idx >= 0 {
+			if ev.type == .ButtonPress { layer_on_button(d, idx, be) } else { layer_on_release(d, be) }
 			return true
 		}
-		if win != 0 && win == d.indicator.window {
+		if be.window != 0 && be.window == d.indicator.window {
 			if ev.type == .ButtonPress { indicator_hide(d) }
 			return true
+		}
+		if be.window == c.root {
+			// The empty desktop: left button only (the window manager's menus use the others).
+			if ev.type == .ButtonPress { layer_on_root_press(d, be) } else { layer_on_release(d, be) }
+		}
+
+	case .MotionNotify:
+		me := &ev.xmotion
+		if layer_cell_index(d, me.window) >= 0 {
+			layer_on_motion(d, me.x_root, me.y_root)
+			return true
+		}
+		if me.window == c.root { layer_on_motion(d, me.x_root, me.y_root) }
+
+	case .KeyPress:
+		ke := &ev.xkey
+		if ke.window == c.root || layer_cell_index(d, ke.window) >= 0 {
+			layer_on_key(d, ke)
+			return ke.window != c.root
 		}
 
 	case .ConfigureNotify:
@@ -113,14 +139,17 @@ on_root_property :: proc(d: ^Daemon, pe: ^xlib.XPropertyEvent) {
 
 @(private)
 schedule_area_check :: proc(d: ^Daemon) {
-	if d.cfg.linux.shortcuts.mode != "layer" { return }
+	if len(d.layer.items) == 0 { return }
 	if d.area_check_at == 0 { d.area_check_at = tx.now() + COALESCE_DELAY }
 }
 
 @(private)
 is_own_window :: proc(d: ^Daemon, win: xlib.Window) -> bool {
 	if win == 0 { return false }
-	if win == d.indicator.window { return true }
+	switch win {
+	case d.indicator.window, d.layer.pointer.band_win, d.rename.window, d.clipboard.window:
+		return true
+	}
 	return layer_cell_index(d, win) >= 0
 }
 

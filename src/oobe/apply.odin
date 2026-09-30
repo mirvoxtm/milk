@@ -133,13 +133,33 @@ write_config :: proc(w: ^Wizard, wallpapers: []string) -> bool {
 		bar["start"] = lay_json(w, 0)
 		bar["center"] = lay_json(w, 1)
 		bar["end"] = lay_json(w, 2)
+	} else if w.wm_floating && !has_widget(w.cfg, "tasks") {
+		// Floating windows are minimized: give them a task list next to the areas.
+		center := make(json.Array, context.temp_allocator)
+		for id in w.cfg.bar.center {
+			append(&center, json.String(id))
+			if id == "workspaces" { append(&center, json.String("tasks")) }
+		}
+		if len(center) == len(w.cfg.bar.center) { append(&center, json.String("tasks")) }
+		bar["center"] = center
 	}
 	root["bar"] = bar
 
 	wm := json_child(root, "wm")
 	wm["borderColor"] = json.String(colors.border_color)
 	wm["focusColor"] = json.String(colors.focus_color)
+	wm["mode"] = json.String(w.wm_floating ? "floating" : "tiling")
+	if w.wm_floating != (w.cfg.wm.mode == "floating") {
+		// Floating windows are clicked to focus; tiled ones follow the mouse.
+		wm["focusFollowsMouse"] = json.Boolean(!w.wm_floating)
+	}
 	root["wm"] = wm
+
+	linux := json_child(root, "linux")
+	icons := json_child(linux, "desktopIcons")
+	icons["enabled"] = json.Boolean(w.desktop_icons)
+	linux["desktopIcons"] = icons
+	root["linux"] = linux
 
 	ensure_workspaces(&root, w.areas[:])
 	workspaces := json_child(root, "workspaces")
@@ -171,6 +191,14 @@ write_config :: proc(w: ^Wizard, wallpapers: []string) -> bool {
 	log.infof("Setup: %s updated (theme %s %s, bar %s %s)", path, theme_name, dark ? "dark" : "light",
 	          w.bar_top ? "top" : "bottom", w.bar_floating ? "floating" : "full")
 	return true
+}
+
+@(private)
+has_widget :: proc(cfg: ^config.Config, id: string) -> bool {
+	for group in ([3][]string{cfg.bar.start, cfg.bar.center, cfg.bar.end}) {
+		for w in group { if w == id { return true } }
+	}
+	return false
 }
 
 // Write milk.json back: pretty, sorted keys, replaced atomically.

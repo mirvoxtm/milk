@@ -11,7 +11,10 @@ add_key :: proc(m: ^Manager, mod: xlib.InputMask, sym: xlib.KeySym, func: Action
 	append(&m.keys, Key{mod = mod, keysym = sym, func = func, arg = arg})
 }
 
-// (Re)build the key and button tables from the settings.
+// (Re)build the key and button tables from the settings: dwm's keys (the
+// layout keys only in the tiling mode), the floating mode's openbox-like keys,
+// then wm.keys (built-in actions) and wm.bindings (commands), each replacing
+// an earlier binding of the same keys; the buttons come from wm.mouse.
 build_bindings :: proc(m: ^Manager) {
 	clear(&m.keys)
 	clear(&m.buttons)
@@ -21,24 +24,30 @@ build_bindings :: proc(m: ^Manager) {
 	MOD := s.modkey
 	SHIFT :: xlib.InputMask{.ShiftMask}
 	CTRL :: xlib.InputMask{.ControlMask}
+	ALT :: xlib.InputMask{.Mod1Mask}
+	act :: proc(m: ^Manager, mod: xlib.InputMask, sym: xlib.KeySym, action: string) {
+		add_key(m, mod, sym, key_action, {cmd = action})
+	}
 
 	add_key(m, MOD, .XK_p, spawn, {cmd = s.launcher})
 	add_key(m, MOD, .XK_Return, spawn, {cmd = s.terminal})
 	add_key(m, MOD, .XK_j, focusstack, {i = +1})
 	add_key(m, MOD, .XK_k, focusstack, {i = -1})
-	add_key(m, MOD, .XK_i, incnmaster, {i = +1})
-	add_key(m, MOD, .XK_d, spawn, {cmd = s.launcher})
-	add_key(m, MOD + SHIFT, .XK_d, incnmaster, {i = -1})
-	add_key(m, MOD, .XK_h, setmfact, {f = -0.05})
-	add_key(m, MOD, .XK_l, setmfact, {f = +0.05})
-	add_key(m, MOD + SHIFT, .XK_Return, zoom)
+	if !s.floating {
+		add_key(m, MOD, .XK_i, incnmaster, {i = +1})
+		add_key(m, MOD, .XK_d, spawn, {cmd = s.launcher})
+		add_key(m, MOD + SHIFT, .XK_d, incnmaster, {i = -1})
+		add_key(m, MOD, .XK_h, setmfact, {f = -0.05})
+		add_key(m, MOD, .XK_l, setmfact, {f = +0.05})
+		add_key(m, MOD + SHIFT, .XK_Return, zoom)
+		add_key(m, MOD, .XK_t, setlayout, {lt = .Tile, has_lt = true})
+		add_key(m, MOD, .XK_f, setlayout, {lt = .Float, has_lt = true})
+		add_key(m, MOD, .XK_m, setlayout, {lt = .Monocle, has_lt = true})
+		add_key(m, MOD, .XK_space, setlayout)
+		add_key(m, MOD + SHIFT, .XK_space, togglefloating)
+	}
 	add_key(m, MOD, .XK_Tab, view)
 	add_key(m, MOD + SHIFT, .XK_c, killclient)
-	add_key(m, MOD, .XK_t, setlayout, {lt = .Tile, has_lt = true})
-	add_key(m, MOD, .XK_f, setlayout, {lt = .Float, has_lt = true})
-	add_key(m, MOD, .XK_m, setlayout, {lt = .Monocle, has_lt = true})
-	add_key(m, MOD, .XK_space, setlayout)
-	add_key(m, MOD + SHIFT, .XK_space, togglefloating)
 	add_key(m, MOD, .XK_0, view, {ui = max(u32)})
 	add_key(m, MOD + SHIFT, .XK_0, tag, {ui = max(u32)})
 	add_key(m, MOD, .XK_comma, focusmon, {i = -1})
@@ -60,8 +69,25 @@ build_bindings :: proc(m: ^Manager) {
 	add_key(m, MOD, .XK_v, open_panel, {cmd = "clipboard"})
 	add_key(m, MOD, .XK_n, open_panel, {cmd = "notifications"})
 	add_key(m, MOD + SHIFT, .XK_r, reload_config)
-	add_key(m, MOD + SHIFT, .XK_f, togglefullscreen)
+	act(m, MOD + SHIFT, .XK_f, "fullscreen")
 	add_key(m, MOD + SHIFT, .XK_s, spawn, {cmd = s.screenshot})
+	act(m, ALT, .XK_Tab, "switch-windows")
+	act(m, ALT + SHIFT, .XK_Tab, "switch-windows-reverse")
+	if s.floating {
+		act(m, ALT, .XK_F4, "close")
+		act(m, ALT, .XK_space, "window-menu")
+		act(m, MOD, .XK_Up, "maximize")
+		act(m, MOD, .XK_Down, "restore")
+		act(m, MOD, .XK_Left, "snap-left")
+		act(m, MOD, .XK_Right, "snap-right")
+		act(m, MOD, .XK_h, "minimize")
+		act(m, MOD, .XK_c, "center")
+		act(m, MOD, .XK_d, "show-desktop")
+		act(m, CTRL + ALT, .XK_Left, "view-prev")
+		act(m, CTRL + ALT, .XK_Right, "view-next")
+		act(m, CTRL + ALT + SHIFT, .XK_Left, "send-prev")
+		act(m, CTRL + ALT + SHIFT, .XK_Right, "send-next")
+	}
 	// Hardware keys (no modifier): XF86AudioMute/LowerVolume/RaiseVolume and
 	// XF86MonBrightnessUp/Down, handled by contrib/milk-keys.
 	media := [?]struct { sym: uint, arg: string }{
@@ -74,17 +100,32 @@ build_bindings :: proc(m: ^Manager) {
 		add_key(m, {}, xlib.KeySym(k.sym), spawn, {cmd = cmd})
 	}
 
-	// wm.bindings: a user binding replaces a default one with the same keys.
-	for b in s.bindings {
+	// wm.keys and wm.bindings: a user binding replaces a default one with the same keys.
+	replace :: proc(m: ^Manager, mod: xlib.InputMask, sym: xlib.KeySym) {
 		for i := len(m.keys) - 1; i >= 0; i -= 1 {
-			if m.keys[i].mod == b.mod && m.keys[i].keysym == b.keysym { ordered_remove(&m.keys, i) }
+			if m.keys[i].mod == mod && m.keys[i].keysym == sym { ordered_remove(&m.keys, i) }
 		}
+	}
+	for k in s.key_actions {
+		replace(m, k.mod, k.keysym)
+		if k.action != "none" { act(m, k.mod, k.keysym, k.action) }
+	}
+	for b in s.bindings {
+		replace(m, b.mod, b.keysym)
 		add_key(m, b.mod, b.keysym, spawn, {cmd = b.command})
 	}
 
-	append(&m.buttons, Button{click = .Client_Win, mask = MOD, button = 1, func = movemouse})
-	append(&m.buttons, Button{click = .Client_Win, mask = MOD, button = 2, func = togglefloating})
-	append(&m.buttons, Button{click = .Client_Win, mask = MOD, button = 3, func = resizemouse})
+	// wm.mouse: the client and root contexts (the title bar reads the settings itself).
+	for b in s.mouse {
+		if b.button == 0 || b.action == "none" { continue }
+		click: Click
+		switch b.ctx {
+		case "client": click = .Client_Win
+		case "root":   click = .Root_Win
+		case:          continue
+		}
+		append(&m.buttons, Button{click = click, mask = b.mod, button = b.button, func = mouse_action, arg = {cmd = b.action}})
+	}
 }
 
 // CLEANMASK: drop NumLock/CapsLock and the button bits.

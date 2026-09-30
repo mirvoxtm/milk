@@ -3,6 +3,7 @@
 package wm
 
 import xlib "vendor:x11/xlib"
+import tx "../tx"
 
 // dwm's layouts[] from config.def.h: tiled (default), floating (no arrange
 // function) and monocle.
@@ -26,6 +27,12 @@ Window_Kind :: enum u8 {
 	Desktop, // _NET_WM_WINDOW_TYPE_DESKTOP: sticky, borderless, kept at the bottom
 	Popup,   // notification/tooltip/splash: kept above the selection
 }
+
+// Where a floating window was snapped with the mouse or the keyboard.
+Snap :: enum u8 { None, Left, Right, Top, Bottom, Top_Left, Top_Right, Bottom_Left, Bottom_Right }
+
+// Stacking layer of a window in the floating mode (_NET_WM_STATE_ABOVE/BELOW).
+Layer :: enum u8 { Normal, Above, Below }
 
 // A managed top-level window.
 Client :: struct {
@@ -66,6 +73,42 @@ Client :: struct {
 	snext:                  ^Client, // focus stack
 	mon:                    ^Monitor,
 	win:                    xlib.Window,
+	// Floating mode (frame.odin, floating.odin). A framed client is reparented
+	// into `frame`; x/y then give the frame's corner and w/h the client's size,
+	// so width()/height() (the outer size) keep dwm's arithmetic valid.
+	frame:                  xlib.Window, // 0 = not reparented
+	title_win:              xlib.Window, // child of the frame: the painted title bar
+	title_pixmap:           xlib.Pixmap,
+	title_w:                i32,         // width the title bar was painted for
+	grip:                   xlib.Window, // InputOnly sibling below the frame: the invisible resize margin
+	grip_dir:               int,         // resize direction whose cursor the grip shows, -1 = none
+	ext:                    [4]i32,      // frame extents: left, right, top, bottom
+	nodecor:                bool,        // no title bar (_MOTIF_WM_HINTS, a rule or the user)
+	focused:                bool,        // the title bar is painted as the active one
+	icon:                   tx.Image,    // _NET_WM_ICON at the title bar's size
+	has_icon:               bool,
+	title_hits:             [8]Title_Hit,
+	nhits:                  int,
+	hover:                  int,  // title element under the pointer, -1 = none
+	pressed:                int,  // title button held down, -1 = none
+	minimized:              bool,
+	max_horz, max_vert:     bool, // maximized horizontally / vertically
+	snapped:                Snap,
+	saved:                  [4]i32, // geometry before maximize/snap (x, y, w, h)
+	has_saved:              bool,
+	shaded:                 bool,
+	layer:                  Layer,
+	sticky:                 bool,
+	sticky_tags:            u32,  // tags before "on every area"
+	transient_for:          xlib.Window, // WM_TRANSIENT_FOR (dialogs stay above it)
+	float_geom:             [4]i32,      // x, y, w, h in the floating mode before the last switch to tiling
+	has_float_geom:         bool,
+}
+
+// A clickable element of a title bar (title bar coordinates).
+Title_Hit :: struct {
+	r:      tx.Rect,
+	letter: u8, // 'N', 'L', 'I', 'M', 'C', 'S', 'D', 'A'
 }
 
 // One RandR monitor.
@@ -112,6 +155,7 @@ Click :: enum u8 {
 	Root_Win,
 }
 
+
 Button :: struct {
 	click:  Click,
 	mask:   xlib.InputMask,
@@ -124,8 +168,13 @@ Button :: struct {
 // Helpers (dwm's macros and list functions)
 // ---------------------------------------------------------------------------
 
-// ISVISIBLE: the client has a tag selected on its monitor.
+// ISVISIBLE: the client has a tag selected on its monitor and is not minimized.
 is_visible :: proc(c: ^Client) -> bool {
+	return c.tags & c.mon.tagset[c.mon.seltags] != 0 && !c.minimized
+}
+
+// On the selected tags of its monitor, minimized or not (the window switcher).
+on_current_tags :: proc(c: ^Client) -> bool {
 	return c.tags & c.mon.tagset[c.mon.seltags] != 0
 }
 
@@ -134,9 +183,16 @@ is_focusable :: proc(c: ^Client) -> bool {
 	return is_visible(c) && !c.nofocus
 }
 
-// WIDTH/HEIGHT: outer size including the border.
-width :: proc(c: ^Client) -> i32 { return c.w + 2 * c.bw }
-height :: proc(c: ^Client) -> i32 { return c.h + 2 * c.bw }
+// WIDTH/HEIGHT: outer size including the border (and the frame of a framed client).
+width :: proc(c: ^Client) -> i32 { return c.w + ext_w(c) }
+height :: proc(c: ^Client) -> i32 { return c.h + ext_h(c) }
+
+// What surrounds the client window horizontally / vertically.
+ext_w :: proc(c: ^Client) -> i32 { return 2 * c.bw + c.ext[0] + c.ext[1] }
+ext_h :: proc(c: ^Client) -> i32 { return 2 * c.bw + c.ext[2] + c.ext[3] }
+
+// The window the X server stacks and moves: the frame, or the client itself.
+top_window :: proc(c: ^Client) -> xlib.Window { return c.frame != 0 ? c.frame : c.win }
 
 // The monitor's current layout.
 cur_layout :: proc(mon: ^Monitor) -> Layout { return mon.lt[mon.sellt] }
@@ -193,12 +249,32 @@ nexttiled :: proc(from: ^Client) -> ^Client {
 	return c
 }
 
+// The client of a client window or of its frame.
 wintoclient :: proc(m: ^Manager, w: xlib.Window) -> ^Client {
 	if w == 0 { return nil }
 	for mon := m.mons; mon != nil; mon = mon.next {
 		for c := mon.clients; c != nil; c = c.next {
-			if c.win == w { return c }
+			if c.win == w || (c.frame != 0 && c.frame == w) { return c }
 		}
 	}
 	return nil
+}
+
+// Parts of a framed window that receive events (frame.odin).
+Frame_Part :: enum u8 { None, Frame, Title, Grip }
+
+// The client owning a frame, title bar or resize margin window.
+frame_part :: proc(m: ^Manager, w: xlib.Window) -> (^Client, Frame_Part) {
+	if w == 0 { return nil, .None }
+	for mon := m.mons; mon != nil; mon = mon.next {
+		for c := mon.clients; c != nil; c = c.next {
+			if c.frame == 0 { continue }
+			switch w {
+			case c.frame:     return c, .Frame
+			case c.title_win: return c, .Title
+			case c.grip:      return c, .Grip
+			}
+		}
+	}
+	return nil, .None
 }

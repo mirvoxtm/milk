@@ -63,6 +63,13 @@
     }
   },
   "linux": {
+    "desktopIcons": {
+      "enabled": false,
+      "folder": null,
+      "showHidden": false,
+      "sort": "name",
+      "thumbnails": true
+    },
     "indicator": {
       "duration": 2.4,
       "enabled": true,
@@ -102,12 +109,20 @@
     "enabled": true,
     "focusColor": "#4A3F35",
     "focusFollowsMouse": true,
+    "focusNew": true,
     "gaps": 12,
+    "keys": {},
     "launcher": "rofi -show drun -theme \"$MILK_ROFI_THEME\"",
     "masterCount": 1,
     "masterFactor": 0.55,
+    "menu": null,
     "modKey": "super",
+    "mode": "tiling",
+    "mouse": {},
+    "placement": "smart",
+    "raiseOnFocus": false,
     "resizeHints": true,
+    "resizeMargin": 6,
     "rules": [
       {
         "class": "Gimp",
@@ -115,8 +130,22 @@
       }
     ],
     "screenshot": "",
+    "snapDistance": 16,
+    "snapLayouts": true,
     "tagCount": 9,
-    "terminal": "alacritty --config-file ~/.config/alacritty/milk.toml"
+    "terminal": "alacritty --config-file ~/.config/alacritty/milk.toml",
+    "titleBar": {
+      "activeColor": null,
+      "activeText": null,
+      "align": "left",
+      "buttonStyle": "icons",
+      "font": null,
+      "fontSize": 0,
+      "height": 32,
+      "inactiveColor": null,
+      "inactiveText": null,
+      "layout": "NLIMC"
+    }
   },
   "workspaces": {
     "1": {

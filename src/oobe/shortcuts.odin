@@ -1,7 +1,8 @@
 // Settings → Atalhos: the user's key bindings (wm.bindings: "super+w" →
-// shell command), an editor that captures a key combination with an active
-// keyboard grab and picks what it opens (an installed application, a command
-// or a site/folder), and the read-only list of milk's built-in shortcuts.
+// shell command; wm.keys: "super+Up" → a window manager action), an editor
+// that captures a key combination with an active keyboard grab and picks what
+// it does (an installed application, a command, a site/folder or a window
+// action), and the read-only list of milk's built-in shortcuts.
 package oobe
 
 import "core:fmt"
@@ -25,7 +26,53 @@ App :: struct {
 
 @(private)
 Binding_Row :: struct {
-	spec, command: string, // owned
+	spec, command: string, // owned; command is the action for wm.keys rows
+	action:        bool,   // a wm.keys row (a window manager action)
+}
+
+// The window manager actions the editor offers (config.WM_ACTIONS has them all).
+@(private)
+Action_Choice :: struct { spec, pt, en: string }
+
+@(private, rodata)
+ACTION_CHOICES := []Action_Choice{
+	{"maximize", "Maximizar / restaurar", "Maximize / restore"},
+	{"minimize", "Minimizar", "Minimize"},
+	{"close", "Fechar a janela", "Close the window"},
+	{"fullscreen", "Tela cheia", "Fullscreen"},
+	{"snap-left", "Encaixar na metade esquerda", "Snap to the left half"},
+	{"snap-right", "Encaixar na metade direita", "Snap to the right half"},
+	{"snap-top-left", "Encaixar no quarto superior esquerdo", "Snap to the top-left quarter"},
+	{"snap-top-right", "Encaixar no quarto superior direito", "Snap to the top-right quarter"},
+	{"snap-bottom-left", "Encaixar no quarto inferior esquerdo", "Snap to the bottom-left quarter"},
+	{"snap-bottom-right", "Encaixar no quarto inferior direito", "Snap to the bottom-right quarter"},
+	{"center", "Centralizar a janela", "Centre the window"},
+	{"above", "Sempre no topo", "Always on top"},
+	{"sticky", "Em todas as áreas", "On every area"},
+	{"shade", "Enrolar", "Shade"},
+	{"decorations", "Mostrar / ocultar a barra de título", "Show / hide the title bar"},
+	{"lower", "Mandar para trás", "Send to the back"},
+	{"toggle-floating", "Alternar janela flutuante", "Toggle floating"},
+	{"window-menu", "Menu da janela", "Window menu"},
+	{"root-menu", "Menu da área de trabalho", "Desktop menu"},
+	{"window-list", "Lista de janelas", "Window list"},
+	{"switch-windows", "Alternar entre as janelas", "Switch between windows"},
+	{"show-desktop", "Mostrar a área de trabalho", "Show the desktop"},
+	{"view-next", "Próxima área", "Next area"},
+	{"view-prev", "Área anterior", "Previous area"},
+	{"send-next", "Levar a janela para a próxima área", "Take the window to the next area"},
+	{"send-prev", "Levar a janela para a área anterior", "Take the window to the previous area"},
+	{"clipboard", "Histórico da área de transferência", "Clipboard history"},
+	{"notifications", "Painel de notificações", "Notification panel"},
+	{"screenshot", "Capturar uma região da tela", "Screenshot of a region"},
+	{"settings", "Configurações do milk", "milk settings"},
+	{"reload", "Recarregar milk.json", "Reload milk.json"},
+}
+
+@(private)
+action_choice :: proc(spec: string) -> int {
+	for a, i in ACTION_CHOICES { if a.spec == spec { return i } }
+	return -1
 }
 
 @(private)
@@ -42,6 +89,8 @@ Shortcut_Editor :: struct {
 	site:        [dynamic]u8,
 	search:      [dynamic]u8,
 	scroll_apps: i32,
+	wm_action:      int, // index into ACTION_CHOICES, -1 = none (kind 3)
+	scroll_actions: i32,
 }
 
 @(private)
@@ -59,41 +108,65 @@ Shortcuts :: struct {
 }
 
 // milk's own shortcuts ("mod" = wm.modKey, "#" = the digits 1..9), from the
-// window manager's key table.
+// window manager's key table; `mode` 1 = the tiling mode only, 2 = the
+// floating mode only, 0 = both.
 @(private)
 Builtin :: struct {
 	keys:   string, // specs separated by spaces
 	pt, en: string,
+	mode:   u8,
 }
 
 @(private, rodata)
 BUILTINS := []Builtin{
-	{"mod+Return", "Abrir o terminal", "Open the terminal"},
-	{"mod+d mod+p", "Abrir o lançador de aplicativos", "Open the application launcher"},
-	{"mod+q mod+shift+c", "Fechar a janela", "Close the window"},
-	{"mod+j mod+k", "Focar a próxima / anterior janela", "Focus the next / previous window"},
-	{"mod+shift+Return", "Trocar com a janela mestre", "Swap with the master window"},
-	{"mod+h mod+l", "Diminuir / aumentar a área mestre", "Shrink / grow the master area"},
-	{"mod+i mod+shift+d", "Mais / menos janelas na área mestre", "More / fewer windows in the master area"},
-	{"mod+t mod+f mod+m", "Lado a lado / flutuante / monóculo", "Tile / floating / monocle layout"},
-	{"mod+space", "Layout anterior", "Previous layout"},
-	{"mod+shift+space", "Alternar janela flutuante", "Toggle floating"},
-	{"mod+shift+f", "Tela cheia", "Fullscreen"},
-	{"mod+#", "Ir para a área 1…9", "Go to area 1…9"},
-	{"mod+shift+#", "Mover a janela para a área 1…9", "Move the window to area 1…9"},
-	{"mod+ctrl+#", "Mostrar também a área 1…9", "Also show area 1…9"},
-	{"mod+ctrl+shift+#", "Pôr a janela também na área 1…9", "Also put the window on area 1…9"},
-	{"mod+0 mod+shift+0", "Todas as áreas / janela em todas", "All areas / window on all areas"},
-	{"mod+Tab", "Área anterior", "Previous area"},
-	{"mod+comma mod+period", "Focar o monitor anterior / próximo", "Focus the previous / next monitor"},
-	{"mod+shift+comma mod+shift+period", "Mover a janela de monitor", "Move the window to another monitor"},
-	{"mod+v", "Histórico da área de transferência", "Clipboard history"},
-	{"mod+n", "Painel de notificações", "Notification panel"},
-	{"mod+shift+s", "Capturar uma região da tela", "Screenshot of a region"},
-	{"mod+shift+r", "Recarregar milk.json", "Reload milk.json"},
-	{"mod+shift+q", "Sair do milk", "Quit milk"},
-	{"XF86AudioMute XF86AudioLowerVolume XF86AudioRaiseVolume", "Mudo / volume − / volume +", "Mute / volume − / volume +"},
-	{"XF86MonBrightnessDown XF86MonBrightnessUp", "Brilho − / +", "Brightness − / +"},
+	{"mod+Return", "Abrir o terminal", "Open the terminal", 0},
+	{"mod+d mod+p", "Abrir o lançador de aplicativos", "Open the application launcher", 1},
+	{"mod+p", "Abrir o lançador de aplicativos", "Open the application launcher", 2},
+	{"mod+q mod+shift+c", "Fechar a janela", "Close the window", 0},
+	{"alt+F4", "Fechar a janela", "Close the window", 2},
+	{"alt+Tab alt+shift+Tab", "Alternar entre as janelas", "Switch between windows", 0},
+	{"mod+j mod+k", "Focar a próxima / anterior janela", "Focus the next / previous window", 0},
+	{"mod+shift+Return", "Trocar com a janela mestre", "Swap with the master window", 1},
+	{"mod+h mod+l", "Diminuir / aumentar a área mestre", "Shrink / grow the master area", 1},
+	{"mod+i mod+shift+d", "Mais / menos janelas na área mestre", "More / fewer windows in the master area", 1},
+	{"mod+t mod+f mod+m", "Lado a lado / flutuante / monóculo", "Tile / floating / monocle layout", 1},
+	{"mod+space", "Layout anterior", "Previous layout", 1},
+	{"mod+shift+space", "Alternar janela flutuante", "Toggle floating", 1},
+	{"mod+Up", "Maximizar / restaurar", "Maximize / restore", 2},
+	{"mod+Down", "Restaurar ou minimizar", "Restore or minimize", 2},
+	{"mod+Left mod+Right", "Encaixar na metade esquerda / direita", "Snap to the left / right half", 2},
+	{"mod+h", "Minimizar", "Minimize", 2},
+	{"mod+c", "Centralizar a janela", "Centre the window", 2},
+	{"mod+d", "Mostrar a área de trabalho", "Show the desktop", 2},
+	{"alt+space", "Menu da janela", "Window menu", 2},
+	{"mod+shift+f", "Tela cheia", "Fullscreen", 0},
+	{"mod+#", "Ir para a área 1…9", "Go to area 1…9", 0},
+	{"mod+shift+#", "Mover a janela para a área 1…9", "Move the window to area 1…9", 0},
+	{"mod+ctrl+#", "Mostrar também a área 1…9", "Also show area 1…9", 0},
+	{"mod+ctrl+shift+#", "Pôr a janela também na área 1…9", "Also put the window on area 1…9", 0},
+	{"mod+0 mod+shift+0", "Todas as áreas / janela em todas", "All areas / window on all areas", 0},
+	{"mod+Tab", "Área anterior", "Previous area", 0},
+	{"ctrl+alt+Left ctrl+alt+Right", "Área anterior / próxima", "Previous / next area", 2},
+	{"ctrl+alt+shift+Left ctrl+alt+shift+Right", "Levar a janela para a área anterior / próxima", "Take the window to the previous / next area", 2},
+	{"mod+comma mod+period", "Focar o monitor anterior / próximo", "Focus the previous / next monitor", 0},
+	{"mod+shift+comma mod+shift+period", "Mover a janela de monitor", "Move the window to another monitor", 0},
+	{"mod+v", "Histórico da área de transferência", "Clipboard history", 0},
+	{"mod+n", "Painel de notificações", "Notification panel", 0},
+	{"mod+shift+s", "Capturar uma região da tela", "Screenshot of a region", 0},
+	{"mod+shift+r", "Recarregar milk.json", "Reload milk.json", 0},
+	{"mod+shift+q", "Sair do milk", "Quit milk", 0},
+	{"XF86AudioMute XF86AudioLowerVolume XF86AudioRaiseVolume", "Mudo / volume − / volume +", "Mute / volume − / volume +", 0},
+	{"XF86MonBrightnessDown XF86MonBrightnessUp", "Brilho − / +", "Brightness − / +", 0},
+}
+
+// Whether a built-in shortcut exists in the window manager's current mode.
+@(private)
+builtin_active :: proc(w: ^Wizard, b: Builtin) -> bool {
+	switch b.mode {
+	case 1: return !w.set.wm_floating
+	case 2: return w.set.wm_floating
+	}
+	return true
 }
 
 // ---------------------------------------------------------------------------
@@ -105,7 +178,10 @@ shortcuts_load :: proc(w: ^Wizard) {
 	if sc.loaded { return }
 	sc.loaded = true
 	for spec, command in w.cfg.wm.bindings {
-		append(&sc.rows, Binding_Row{strings.clone(spec), strings.clone(command)})
+		append(&sc.rows, Binding_Row{strings.clone(spec), strings.clone(command), false})
+	}
+	for spec, action in w.cfg.wm.keys {
+		append(&sc.rows, Binding_Row{strings.clone(spec), strings.clone(action), true})
 	}
 	sort_rows(sc.rows[:])
 	load_apps(w)
@@ -287,6 +363,7 @@ same_keys :: proc(w: ^Wizard, a, b: string) -> bool {
 @(private)
 builtin_conflict :: proc(w: ^Wizard, spec: string) -> (action: string, found: bool) {
 	for b in BUILTINS {
+		if !builtin_active(w, b) { continue }
 		for pattern in strings.fields(b.keys, context.temp_allocator) {
 			if strings.index_byte(pattern, '#') >= 0 {
 				for d in 1 ..= 9 {
@@ -449,6 +526,7 @@ editor_open :: proc(w: ^Wizard, row: int) {
 	clear(&ed.search)
 	ed.open = true
 	ed.app = -1
+	ed.wm_action = -1
 	ed.original = strings.clone("")
 	ed.spec = strings.clone("")
 	if row >= 0 && row < len(sc.rows) {
@@ -458,7 +536,10 @@ editor_open :: proc(w: ^Wizard, row: int) {
 		ed.original = strings.clone(r.spec)
 		ed.spec = strings.clone(r.spec)
 		cmd := strings.trim_space(r.command)
-		if strings.has_prefix(cmd, "xdg-open ") {
+		if r.action {
+			ed.kind = 3
+			ed.wm_action = action_choice(cmd)
+		} else if strings.has_prefix(cmd, "xdg-open ") {
 			ed.kind = 2
 			target := strings.trim_space(cmd[len("xdg-open "):])
 			target = strings.trim(target, "'\"")
@@ -501,6 +582,8 @@ editor_command :: proc(w: ^Wizard) -> string {
 		if strings.has_prefix(target, "~/") { target = join_path({home_dir(), target[2:]}) }
 		quoted, _ := strings.replace_all(target, "'", "'\\''", context.temp_allocator)
 		return fmt.tprintf("xdg-open '%s'", quoted)
+	case 3:
+		if ed.wm_action >= 0 && ed.wm_action < len(ACTION_CHOICES) { return ACTION_CHOICES[ed.wm_action].spec }
 	}
 	return ""
 }
@@ -531,7 +614,7 @@ editor_save :: proc(w: ^Wizard) {
 			ordered_remove(&sc.rows, i)
 		}
 	}
-	append(&sc.rows, Binding_Row{strings.clone(ed.spec), strings.clone(command)})
+	append(&sc.rows, Binding_Row{strings.clone(ed.spec), strings.clone(command), ed.kind == 3})
 	sort_rows(sc.rows[:])
 	sc.dirty = true
 	editor_close(w)
@@ -559,8 +642,9 @@ shortcuts_action :: proc(w: ^Wizard, action: Action, arg: int) {
 	case .Sc_Capture:
 		if sc.ed.capturing { capture_stop(w) } else { capture_start(w) }
 	case .Sc_Kind:
-		sc.ed.kind = clamp(arg, 0, 2)
+		sc.ed.kind = clamp(arg, 0, 3)
 		w.focus = .None
+	case .Sc_Action:  sc.ed.wm_action = arg
 	case .Sc_App:     sc.ed.app = arg
 	case .Sc_Save:    editor_save(w)
 	case .Sc_Cancel:  editor_close(w)
@@ -585,13 +669,16 @@ draw_shortcuts :: proc(w: ^Wizard, cv: ^tx.Canvas, c: tx.Rect) {
 
 // What a binding opens: icon glyph or app icon, and a label.
 @(private)
-draw_target :: proc(w: ^Wizard, cv: ^tx.Canvas, x, cy: i32, max_w: i32, command: string, clip: tx.Rect) {
+draw_target :: proc(w: ^Wizard, cv: ^tx.Canvas, x, cy: i32, max_w: i32, command: string, clip: tx.Rect, action := false) {
 	th := &w.theme
 	cmd := strings.trim_space(command)
 	label := cmd
 	glyph := Icon.Terminal
 	app := -1
-	if strings.has_prefix(cmd, "xdg-open ") {
+	if action {
+		glyph = .App_Window
+		if i := action_choice(cmd); i >= 0 { label = tr(w, ACTION_CHOICES[i].pt, ACTION_CHOICES[i].en) }
+	} else if strings.has_prefix(cmd, "xdg-open ") {
 		glyph = .World
 		label = strings.trim(strings.trim_space(cmd[len("xdg-open "):]), "'\"")
 	} else if app = match_app(w, cmd); app >= 0 {
@@ -639,7 +726,7 @@ draw_shortcut_list :: proc(w: ^Wizard, cv: ^tx.Canvas, c: tx.Rect) {
 			add_hit(w, b, action, i, c)
 			bx -= 40
 		}
-		draw_target(w, cv, x + 36, cy, bx + 34 - (x + 36) - 12, r.command, c)
+		draw_target(w, cv, x + 36, cy, bx + 34 - (x + 36) - 12, r.command, c, r.action)
 		y += 66
 	}
 
@@ -656,6 +743,7 @@ draw_shortcut_list :: proc(w: ^Wizard, cv: ^tx.Canvas, c: tx.Rect) {
 	y += 52
 	if sc.show_builtin {
 		for b in BUILTINS {
+			if !builtin_active(w, b) { continue }
 			row := tx.Rect{c.x, y, c.w, 42}
 			x := row.x + 8
 			for spec, k in strings.fields(b.keys, context.temp_allocator) {
@@ -743,10 +831,10 @@ draw_shortcut_editor :: proc(w: ^Wizard, cv: ^tx.Canvas, c: tx.Rect) {
 	y += 30
 
 	// What it opens.
-	text(w, w.f_tiny, c.x, y, 18, tr(w, "ABRIR", "OPEN"), th.muted)
+	text(w, w.f_tiny, c.x, y, 18, tr(w, "O QUE FAZ", "WHAT IT DOES"), th.muted)
 	y += 22
-	segmented(w, cv, {c.x, y, min(i32(480), c.w), 42}, {tr(w, "Aplicativo", "Application"), tr(w, "Comando", "Command"), tr(w, "Site ou pasta", "Site or folder")},
-	          {.Apps, .Terminal, .World}, ed.kind, .Sc_Kind)
+	segmented(w, cv, {c.x, y, min(i32(680), c.w), 42}, {tr(w, "Aplicativo", "Application"), tr(w, "Comando", "Command"), tr(w, "Site ou pasta", "Site or folder"),
+	          tr(w, "Ação da janela", "Window action")}, {.Apps, .Terminal, .World, .App_Window}, ed.kind, .Sc_Kind)
 	y += 54
 
 	footer_y := c.y + c.h - 44
@@ -768,6 +856,8 @@ draw_shortcut_editor :: proc(w: ^Wizard, cv: ^tx.Canvas, c: tx.Rect) {
 		draw_field(w, cv, {body.x, body.y, body.w, 44}, .World, string(ed.site[:]), tr(w, "Ex.: https://milk.dev ou ~/Documentos", "E.g. https://example.com or ~/Documents"),
 		           w.focus == .Text && w.set.text_target == target, .Text_Field, target)
 		text(w, w.f_small, body.x + 4, body.y + 52, 22, tr(w, "Aberto com xdg-open no aplicativo padrão.", "Opened with xdg-open in the default application."), th.muted)
+	case 3:
+		if body.h > 40 { draw_action_list(w, cv, body) }
 	}
 
 	// Footer.
@@ -827,4 +917,32 @@ draw_app_list :: proc(w: ^Wizard, cv: ^tx.Canvas, r: tx.Rect) {
 		text_centered(w, w.f_body, {r.x, r.y + 16, r.w, 30}, tr(w, "Nenhum aplicativo encontrado", "No application found"), th.muted)
 	}
 	list_end(w, cv, &sub, r, content_h, ed.scroll_apps)
+}
+
+// The window actions of the editor's fourth kind.
+@(private)
+draw_action_list :: proc(w: ^Wizard, cv: ^tx.Canvas, r: tx.Rect) {
+	th := &w.theme
+	ed := &w.set.sc.ed
+	content_h := i32(len(ACTION_CHOICES)) * ROW_H + 8
+	sub := list_begin(w, r, content_h, &ed.scroll_actions, .Actions)
+	for a, i in ACTION_CHOICES {
+		y := 4 + i32(i) * ROW_H - ed.scroll_actions + 2
+		if y + ROW_H < 0 { continue }
+		if y > r.h { break }
+		row := tx.Rect{6, y, r.w - 18, ROW_H - 4}
+		sel := i == ed.wm_action
+		if sel {
+			fill_rounded(&sub, row, 12, th.accent)
+		} else if hovered(w, .Sc_Action, i) {
+			fill_rounded(&sub, row, 12, th.hover)
+		}
+		win_row := tx.Rect{r.x + row.x, r.y + row.y, row.w, row.h}
+		fg := sel ? th.accent_fg : th.fg
+		text(w, w.f_body, win_row.x + 14, win_row.y, win_row.h, ellipsize(w, w.f_body, tr(w, a.pt, a.en), win_row.w - 200), fg, r)
+		sw := text_width(w, w.f_small, a.spec)
+		text(w, w.f_small, win_row.x + win_row.w - 14 - sw, win_row.y, win_row.h, a.spec, sel ? mix(th.accent_fg, th.accent, 0.3) : th.muted, r)
+		add_hit(w, win_row, .Sc_Action, i, r)
+	}
+	list_end(w, cv, &sub, r, content_h, ed.scroll_actions)
 }

@@ -302,9 +302,9 @@ info "$(t "comandos em ~/.local/bin, o tema do Alacritty e a sessão \"milk\" na
           "commands in ~/.local/bin, the Alacritty theme and the \"milk\" session on the login screen" \
           "comandos en ~/.local/bin, el tema de Alacritty y la sesión \"milk\" en la pantalla de inicio de sesión")"
 [ "$lang_chosen" -eq 1 ] && info "$(t "idioma do milk: $lang_name" "milk's language: $lang_name" "idioma de milk: $lang_name")"
-info "$(t "no fim, a configuração inicial (tema, teclado, papéis de parede, barra) abre" \
-          "afterwards the setup wizard (theme, keyboard, wallpapers, bar) opens" \
-          "al final se abre el asistente de configuración (tema, teclado, fondos, barra)")"
+info "$(t "no fim, a configuração inicial (tema, teclado, papéis de parede, barra, janelas) abre" \
+          "afterwards the setup wizard (theme, keyboard, wallpapers, bar, windows) opens" \
+          "al final se abre el asistente de configuración (tema, teclado, fondos, barra, ventanas)")"
 echo
 ask "$(t "Continuar?" "Continue?" "¿Continuar?")" y || { t "Nada foi alterado." "Nothing was changed." "No se cambió nada."; echo; exit 0; }
 
@@ -475,9 +475,9 @@ printf '\n%s✓ %s%s\n' "$G" "$(t "O milk está instalado." "milk is installed."
 # instance reloads when it is done); elsewhere at milk's next start.
 if [ "${XDG_CURRENT_DESKTOP:-}" = milk ] && [ -n "${DISPLAY:-}" ] && "$MILK/bin/milk" status >/dev/null 2>&1; then
     setsid -f "$MILK/bin/milk" setup >/dev/null 2>&1 < /dev/null
-    t "  A configuração inicial está abrindo (tema, teclado, papéis de parede, barra)." \
-      "  The setup is opening now (theme, keyboard, wallpapers, bar)." \
-      "  La configuración se está abriendo (tema, teclado, fondos de pantalla, barra)."
+    t "  A configuração inicial está abrindo (tema, teclado, papéis de parede, barra, janelas)." \
+      "  The setup is opening now (theme, keyboard, wallpapers, bar, windows)." \
+      "  La configuración se está abriendo (tema, teclado, fondos de pantalla, barra, ventanas)."
     echo
     t "  Saia da sessão e entre de novo para usar a nova versão do milk." \
       "  Log out and back in to run the new build of milk." \
@@ -488,9 +488,9 @@ else
       "  Log out and pick \"milk\" in the session menu of the login screen." \
       "  Cierra la sesión y elige \"milk\" en el menú de sesiones de la pantalla de inicio."
     echo
-    t "  O próximo início abre a configuração (tema, teclado, papéis de parede, barra)." \
-      "  The next start opens the setup (theme, keyboard, wallpapers, bar)." \
-      "  El próximo inicio abre la configuración (tema, teclado, fondos de pantalla, barra)."
+    t "  O próximo início abre a configuração (tema, teclado, papéis de parede, barra, janelas)." \
+      "  The next start opens the setup (theme, keyboard, wallpapers, bar, windows)." \
+      "  El próximo inicio abre la configuración (tema, teclado, fondos de pantalla, barra, ventanas)."
     echo
 fi
 t "  Depois: \"milk settings\" ou a engrenagem da barra; Super+E abre o Spoil." \

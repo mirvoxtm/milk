@@ -43,6 +43,23 @@ Atoms :: struct {
 	net_close_window:         xlib.Atom,
 	net_wm_moveresize:        xlib.Atom,
 	net_wm_state_sticky:      xlib.Atom,
+	// Floating mode.
+	net_frame_extents:              xlib.Atom,
+	net_request_frame_extents:      xlib.Atom,
+	net_wm_state_maximized_horz:    xlib.Atom,
+	net_wm_state_maximized_vert:    xlib.Atom,
+	net_wm_state_hidden:            xlib.Atom,
+	net_wm_state_shaded:            xlib.Atom,
+	net_wm_state_above:             xlib.Atom,
+	net_wm_state_below:             xlib.Atom,
+	net_wm_state_demands_attention: xlib.Atom,
+	net_showing_desktop:            xlib.Atom,
+	net_wm_allowed_actions:         xlib.Atom,
+	net_moveresize_window:          xlib.Atom,
+	net_wm_icon:                    xlib.Atom,
+	wm_change_state:                xlib.Atom,
+	motif_wm_hints:                 xlib.Atom,
+	milk_window_menu:               xlib.Atom, // the bar's task list asks for a window menu
 }
 
 // Last values written, so that properties change only when needed.
@@ -90,6 +107,22 @@ ewmh_init :: proc(m: ^Manager) {
 		net_close_window         = tx.atom(c, "_NET_CLOSE_WINDOW"),
 		net_wm_moveresize        = tx.atom(c, "_NET_WM_MOVERESIZE"),
 		net_wm_state_sticky      = tx.atom(c, "_NET_WM_STATE_STICKY"),
+		net_frame_extents              = tx.atom(c, "_NET_FRAME_EXTENTS"),
+		net_request_frame_extents      = tx.atom(c, "_NET_REQUEST_FRAME_EXTENTS"),
+		net_wm_state_maximized_horz    = tx.atom(c, "_NET_WM_STATE_MAXIMIZED_HORZ"),
+		net_wm_state_maximized_vert    = tx.atom(c, "_NET_WM_STATE_MAXIMIZED_VERT"),
+		net_wm_state_hidden            = tx.atom(c, "_NET_WM_STATE_HIDDEN"),
+		net_wm_state_shaded            = tx.atom(c, "_NET_WM_STATE_SHADED"),
+		net_wm_state_above             = tx.atom(c, "_NET_WM_STATE_ABOVE"),
+		net_wm_state_below             = tx.atom(c, "_NET_WM_STATE_BELOW"),
+		net_wm_state_demands_attention = tx.atom(c, "_NET_WM_STATE_DEMANDS_ATTENTION"),
+		net_showing_desktop            = tx.atom(c, "_NET_SHOWING_DESKTOP"),
+		net_wm_allowed_actions         = tx.atom(c, "_NET_WM_ALLOWED_ACTIONS"),
+		net_moveresize_window          = tx.atom(c, "_NET_MOVERESIZE_WINDOW"),
+		net_wm_icon                    = tx.atom(c, "_NET_WM_ICON"),
+		wm_change_state                = tx.atom(c, "WM_CHANGE_STATE"),
+		motif_wm_hints                 = tx.atom(c, "_MOTIF_WM_HINTS"),
+		milk_window_menu               = tx.atom(c, "_MILK_WINDOW_MENU"),
 	}
 	m.ewmh.current_desktop = -1
 	m.ewmh.clients = make([dynamic]xlib.Window)
@@ -120,8 +153,12 @@ ewmh_setup :: proc(m: ^Manager) {
 		a.net_client_list, a.net_client_list_stacking, a.net_desktop_names, a.net_desktop_viewport,
 		a.net_number_of_desktops, a.net_current_desktop, a.net_wm_desktop, a.net_workarea,
 		a.net_close_window, a.net_wm_moveresize, a.net_wm_state_sticky,
+		a.net_wm_state_hidden, a.net_wm_state_demands_attention, a.net_showing_desktop, a.net_moveresize_window,
+		a.net_wm_state_maximized_horz, a.net_wm_state_maximized_vert, a.net_wm_state_shaded, a.net_wm_state_above,
+		a.net_wm_state_below, a.net_frame_extents, a.net_request_frame_extents, a.net_wm_allowed_actions,
 	}
 	tx.set_atom_list(m.c, m.root, "_NET_SUPPORTED", supported[:])
+	tx.set_cardinals(m.c, m.root, "_NET_SHOWING_DESKTOP", {0})
 	ewmh_write_desktops(m)
 	xlib.DeleteProperty(m.dpy, m.root, a.net_client_list)
 	xlib.DeleteProperty(m.dpy, m.root, a.net_client_list_stacking)
@@ -157,7 +194,7 @@ ewmh_teardown :: proc(m: ^Manager) {
 		m.wmcheckwin = 0
 	}
 	for prop in ([]xlib.Atom{a.net_wm_check, a.net_supported, a.net_wm_name, a.net_client_list,
-	                         a.net_client_list_stacking, a.net_workarea}) {
+	                         a.net_client_list_stacking, a.net_workarea, a.net_showing_desktop}) {
 		xlib.DeleteProperty(m.dpy, m.root, prop)
 	}
 	clear(&m.ewmh.clients)
@@ -231,7 +268,8 @@ ewmh_sync :: proc(m: ^Manager) {
 		m.ewmh.stacking_dirty = false
 		order := make([dynamic]xlib.Window, context.temp_allocator)
 		for w in tx.root_children(m.c) {
-			if wintoclient(m, w) != nil { append(&order, w) }
+			// Frames stand for their clients.
+			if c := wintoclient(m, w); c != nil { append(&order, c.win) }
 		}
 		if !m.ewmh.stacking_written || !slice.equal(order[:], m.ewmh.stacking[:]) {
 			m.ewmh.stacking_written = true

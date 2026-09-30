@@ -7,9 +7,14 @@
 // desktop icons, or copied into the XDG Desktop folder like on Windows) and
 // the "AREA N - Name" indicator.
 //
+// With linux.desktopIcons the files of a folder (the XDG Desktop folder by
+// default) join the area shortcuts as icons that can be selected, dragged,
+// opened, renamed and trashed (files.odin, selection.odin, actions.odin).
+//
 // The package owns no event loop: the caller selects ROOT_EVENT_MASK on the
-// root window, feeds every X event to handle_event, calls tick every loop
-// iteration and sleeps at most next_timeout seconds.
+// root window, feeds every X event to handle_event, polls poll_fds (calling
+// handle_fd when one is readable), calls tick every loop iteration and
+// sleeps at most next_timeout seconds.
 package desktop
 
 import "base:runtime"
@@ -18,6 +23,7 @@ import "core:strings"
 import "core:sys/posix"
 import xlib "vendor:x11/xlib"
 import config "../config"
+import menu "../menu"
 import tx "../tx"
 
 // Deferral used to coalesce bursts of X events into one action.
@@ -42,6 +48,14 @@ Daemon :: struct {
 	icons:          Icon_Loader,
 	layer:          Layer,
 	indicator:      Indicator,
+	files:          Desktop_Files,  // the desktop folder (linux.desktopIcons)
+	places:         Places,         // saved icon places
+	thumbs:         Thumbs,         // picture previews
+	rename:         Rename_Editor,
+	menu:           menu.Menu,      // an icon's context menu
+	menu_targets:   [dynamic]Menu_Target,
+	clipboard:      Clipboard_Owner,
+	last_time:      xlib.Time,      // of the last button or key event (selection ownership)
 	children:       [dynamic]posix.pid_t, // launched applications not reaped yet
 	// Deferred work (tx.now() deadlines, 0 = nothing pending).
 	screen_change_at: f64, // root ConfigureNotify: re-apply wallpaper + relayout
@@ -85,9 +99,13 @@ create :: proc(c: ^tx.Connection, cfg: ^config.Config, runtime_root: string) -> 
 		type_dock       = tx.atom(c, "_NET_WM_WINDOW_TYPE_DOCK"),
 	}
 	d.children = make([dynamic]posix.pid_t)
+	d.menu_targets = make([dynamic]Menu_Target)
 	icons_init(&d.icons, cfg)
 	layer_init(d)
 	indicator_init(d)
+	places_init(d)
+	thumbs_init(d)
+	files_init(d)
 	return d, true
 }
 
@@ -96,8 +114,17 @@ create :: proc(c: ^tx.Connection, cfg: ^config.Config, runtime_root: string) -> 
 destroy :: proc(d: ^Daemon) {
 	if d == nil { return }
 	context.allocator = d.allocator
+	menu.destroy(&d.menu)
+	menu_targets_clear(d)
+	delete(d.menu_targets)
+	rename_destroy(d)
+	pointer_destroy(d)
 	layer_destroy(d)
 	indicator_destroy(d)
+	files_destroy(d)
+	thumbs_destroy(d)
+	places_destroy(d)
+	clipboard_destroy(d)
 	icons_destroy(&d.icons)
 	reap_children(d)
 	delete(d.children)
@@ -122,11 +149,15 @@ start :: proc(d: ^Daemon) {
 	switch_area(d, index)
 }
 
-// Timers: indicator hide, deferred relayouts/refreshes and child reaping.
+// Timers: indicator hide, deferred relayouts/refreshes, folder rescans,
+// saving icon places, coalesced pointer motion and child reaping.
 tick :: proc(d: ^Daemon, now: f64) {
 	context.allocator = d.allocator
 	reap_children(d)
 	indicator_tick(d, now)
+	pointer_tick(d)
+	files_tick(d, now)
+	places_tick(d, now)
 	if d.screen_change_at > 0 && now >= d.screen_change_at {
 		d.screen_change_at = 0
 		d.area_check_at = 0
@@ -158,7 +189,27 @@ next_timeout :: proc(d: ^Daemon, now: f64) -> f64 {
 	consider(&best, d.screen_change_at, now)
 	consider(&best, d.area_check_at, now)
 	consider(&best, d.bg_refresh_at, now)
+	for t in ([]f64{files_next_timeout(d, now), places_next_timeout(d, now)}) {
+		if t >= 0 && (best < 0 || t < best) { best = t }
+	}
 	return best
+}
+
+// File descriptors to poll for reading besides the X connection: the
+// desktop folder's inotify watch and the thumbnail worker's pipe (temp
+// allocator). Call handle_fd when one is readable.
+poll_fds :: proc(d: ^Daemon) -> []i32 {
+	out := make([dynamic]i32, 0, 2, context.temp_allocator)
+	if fd, ok := files_fd(d); ok { append(&out, fd) }
+	if fd, ok := thumbs_fd(d); ok { append(&out, fd) }
+	return out[:]
+}
+
+handle_fd :: proc(d: ^Daemon, fd: i32) {
+	context.allocator = d.allocator
+	if f, ok := files_fd(d); ok && f == fd { files_on_notify(d) }
+	if t, ok := thumbs_fd(d); ok && t == fd { thumbs_collect(d) }
+	tx.flush(d.c)
 }
 
 // Switch to a new configuration. The caller owns `cfg`; the previous config
@@ -173,13 +224,17 @@ reload :: proc(d: ^Daemon, cfg: ^config.Config) {
 		// new configuration copies its own set below if it is still in folder mode.
 		folder_remove_managed(d, old)
 	}
+	menu.close(&d.menu)
+	menu_targets_clear(d)
 	layer_clear(d)
 	indicator_hide(d)
 	d.cfg = cfg
 	ensure_runtime_dirs(d)
 	icons_destroy(&d.icons)
 	icons_init(&d.icons, cfg)
+	if cfg.linux.shortcuts.icon_size != old.linux.shortcuts.icon_size { thumbs_clear(d) }
 	layer_reconfigure(d)
+	files_configure(d)
 	indicator_reconfigure(d)
 	if !d.started { return }
 	if d.area > 0 {
@@ -191,11 +246,14 @@ reload :: proc(d: ^Daemon, cfg: ^config.Config) {
 	}
 }
 
-// Every X window the daemon owns (icon cells and the indicator).
+// Every X window the daemon owns (icon cells, the rubber band, the rename
+// field, the clipboard owner and the indicator).
 window_ids :: proc(d: ^Daemon, allocator := context.temp_allocator) -> []xlib.Window {
-	out := make([dynamic]xlib.Window, 0, len(d.layer.cells) + 1, allocator)
+	out := make([dynamic]xlib.Window, 0, len(d.layer.cells) + 4, allocator)
 	for &cell in d.layer.cells { append(&out, cell.window) }
-	if d.indicator.window != 0 { append(&out, d.indicator.window) }
+	for w in ([]xlib.Window{d.layer.pointer.band_win, d.rename.window, d.clipboard.window, d.indicator.window}) {
+		if w != 0 { append(&out, w) }
+	}
 	return out[:]
 }
 
@@ -234,6 +292,8 @@ switch_area :: proc(d: ^Daemon, index: int) {
 	log.debugf("Area %d applied in %.0f ms", index, (tx.now() - started) * 1000)
 }
 
+// The area's shortcuts ("layer" mode) or their copies in the Desktop folder
+// ("folder" mode), next to the desktop folder's files.
 @(private)
 apply_shortcuts :: proc(d: ^Daemon, index: int) {
 	common := join_path({d.runtime_root, d.cfg.paths.common})
@@ -242,16 +302,19 @@ apply_shortcuts :: proc(d: ^Daemon, index: int) {
 		area_dir = join_path({d.runtime_root, ws.folder})
 		ensure_dir(area_dir)
 	}
+	shortcuts: [dynamic]Shortcut
 	switch d.cfg.linux.shortcuts.mode {
 	case "layer":
-		entries := collect_entries(common, area_dir, d.allocator)
-		layer_show(d, &entries)
+		shortcuts = collect_entries(common, area_dir, d.allocator)
 	case "folder":
-		layer_clear(d)
 		folder_sync(d, common, area_dir)
-	case:
-		layer_clear(d)
+		// The copies show at once, without waiting for inotify.
+		if d.files.enabled { files_scan(d, false) }
 	}
+	if d.files.enabled { places_prune_shortcuts(d) }
+	// Another area: nothing stays selected.
+	for &cell in d.layer.cells { cell.selected = false }
+	layer_set_area(d, &shortcuts, true)
 }
 
 // The screen size changed (RandR): the old wallpaper pixmap has the old size,
@@ -261,7 +324,7 @@ on_screen_change :: proc(d: ^Daemon) {
 	if d.area <= 0 { return }
 	log.debug("Screen geometry changed; re-applying the wallpaper and the icon layout")
 	apply_wallpaper(d, d.area)
-	if d.cfg.linux.shortcuts.mode == "layer" { layer_relayout(d) }
+	layer_relayout(d)
 	indicator_refresh(d)
 }
 

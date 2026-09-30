@@ -15,6 +15,8 @@ Atoms :: struct {
 	wm_check, supported: xlib.Atom,
 	net_wm_name, wm_name, net_wm_icon, net_wm_state, net_wm_desktop: xlib.Atom,
 	fullscreen: xlib.Atom,
+	// The task list (tasks.odin).
+	wm_hints, net_wm_window_type, state_hidden, state_skip_taskbar, state_attention: xlib.Atom,
 }
 
 Workspaces_State :: struct {
@@ -53,6 +55,11 @@ intern_atoms :: proc(b: ^Bar) {
 		net_wm_state       = tx.atom(c, "_NET_WM_STATE"),
 		net_wm_desktop     = tx.atom(c, "_NET_WM_DESKTOP"),
 		fullscreen         = tx.atom(c, "_NET_WM_STATE_FULLSCREEN"),
+		wm_hints           = tx.atom(c, "WM_HINTS"),
+		net_wm_window_type = tx.atom(c, "_NET_WM_WINDOW_TYPE"),
+		state_hidden       = tx.atom(c, "_NET_WM_STATE_HIDDEN"),
+		state_skip_taskbar = tx.atom(c, "_NET_WM_STATE_SKIP_TASKBAR"),
+		state_attention    = tx.atom(c, "_NET_WM_STATE_DEMANDS_ATTENTION"),
 	}
 }
 
@@ -159,9 +166,10 @@ watch_active :: proc(b: ^Bar) {
 	}
 }
 
+// While the window is still listed, the task list takes the mask over.
 @(private)
 unwatch_active :: proc(b: ^Bar) {
-	if b.active.watching && b.active.win != 0 {
+	if b.active.watching && b.active.win != 0 && !tasks_adopt_watch(b, b.active.win) {
 		attrs: xlib.XWindowAttributes
 		if xlib.GetWindowAttributes(b.c.dpy, b.active.win, &attrs) != 0 {
 			xlib.SelectInput(b.c.dpy, b.active.win, attrs.your_event_mask - {.PropertyChange})

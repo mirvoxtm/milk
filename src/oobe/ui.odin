@@ -35,7 +35,7 @@ Icon :: enum {
 	Layout_Top, Layout_Bottom, Search, Sparkles, Rocket, Milk, Desktop, Bell, Clipboard, Layout_Grid, Info, App_Window,
 	Plus, Pencil, Trash, Chevron_Down, Chevron_Right, World, Terminal, Apps, Command, Alert,
 	Arrow_Up, Arrow_Down, Layout_Dashboard, Player_Play, Space, Wifi, Bluetooth, Volume, Battery, Calendar, Clock,
-	Settings, Power,
+	Settings, Power, Box_Multiple,
 }
 
 // Tabler codepoints (the font the bar uses; see /usr/share/noctalia/assets/fonts/tabler.json).
@@ -49,7 +49,7 @@ ICON_CODES := [Icon]rune{
 	.Terminal = 0xEBEF, .Apps = 0xEBB6, .Command = 0xEA78, .Alert = 0xEA06,
 	.Arrow_Up = 0xEA25, .Arrow_Down = 0xEA16, .Layout_Dashboard = 0xF02C, .Player_Play = 0xED46, .Space = 0xEC0C,
 	.Wifi = 0xEB52, .Bluetooth = 0xEA37, .Volume = 0xEB51, .Battery = 0xEA31, .Calendar = 0xEA53, .Clock = 0xEA70,
-	.Settings = 0xEB20, .Power = 0xEB0D,
+	.Settings = 0xEB20, .Power = 0xEB0D, .Box_Multiple = 0xEE17,
 }
 
 foreign import xft_clip "system:Xft"
@@ -677,6 +677,7 @@ render :: proc(w: ^Wizard) {
 		case .Keyboard:  draw_keyboard_page(w, &cv, c)
 		case .Wallpaper: draw_wallpaper_page(w, &cv, c)
 		case .Bar:       draw_bar_page(w, &cv, c)
+		case .Windows:   draw_windows_page(w, &cv, c)
 		case .Summary:   draw_summary_page(w, &cv)
 		}
 	}
@@ -750,7 +751,7 @@ draw_chrome :: proc(w: ^Wizard, cv: ^tx.Canvas) {
 	case .Summary:
 		next = tr(w, "Começar", "Start")
 		next_icon = .Check
-	case .Theme, .Keyboard, .Wallpaper, .Bar:
+	case .Theme, .Keyboard, .Wallpaper, .Bar, .Windows:
 	}
 	nw := max(button_width(w, next, .None, next_icon), 150)
 	next_r := tx.Rect{right - nw, by, nw, BUTTON_H}
@@ -783,6 +784,10 @@ page_heading :: proc(w: ^Wizard) -> (title, sub: string) {
 		return tr(w, "Estilo da barra", "Bar style"),
 		       tr(w, "Onde a barra fica e como ela se apoia na tela.",
 		             "Where the bar sits and how it meets the screen edges.")
+	case .Windows:
+		return tr(w, "Janelas", "Windows"),
+		       tr(w, "Lado a lado, como no dwm, ou flutuantes com barra de título, como no openbox e no Windows.",
+		             "Side by side like dwm, or floating with title bars like openbox and Windows.")
 	case .Summary:
 		return tr(w, "Tudo pronto", "All set"),
 		       tr(w, "Confira suas escolhas. Dá para mudar tudo depois nos ajustes rápidos da barra ou em milk.json.",

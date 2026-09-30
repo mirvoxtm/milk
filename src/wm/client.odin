@@ -41,6 +41,7 @@ manage :: proc(m: ^Manager, w: xlib.Window, wa: ^xlib.XWindowAttributes, adoptin
 	c := new(Client)
 	c.win = w
 	c.desktop = -1
+	c.hover, c.pressed, c.grip_dir = -1, -1, -1
 	// geometry
 	c.x = wa.x; c.oldx = wa.x
 	c.y = wa.y; c.oldy = wa.y
@@ -52,14 +53,19 @@ manage :: proc(m: ^Manager, w: xlib.Window, wa: ^xlib.XWindowAttributes, adoptin
 	updatetitle(m, c)
 	trans: xlib.Window
 	parent: ^Client
+	eff: Rule_Effects
 	if status_ok(xlib.GetTransientForHint(m.dpy, w, &trans)) { parent = wintoclient(m, trans) } else { trans = 0 }
+	if parent != nil { c.transient_for = parent.win }
 	if parent != nil {
 		c.mon = parent.mon
 		c.tags = parent.tags
 	} else {
 		c.mon = m.selmon
-		applyrules(m, c)
-		if adopting { restore_desktop(m, c) }
+		eff = applyrules(m, c)
+		if adopting {
+			restore_desktop(m, c)
+			restore_states(m, c, &eff)
+		}
 	}
 
 	mon := c.mon
@@ -89,26 +95,65 @@ manage :: proc(m: ^Manager, w: xlib.Window, wa: ^xlib.XWindowAttributes, adoptin
 	updatesizehints(m, c)
 	updatewmhints(m, c)
 	if c.ispip || detect_pip(m, c) { pip_apply(m, c, true, adopting) }
-	xlib.SelectInput(m.dpy, w, {.EnterWindow, .FocusChange, .PropertyChange, .StructureNotify})
+	// milk: the floating mode puts ordinary windows in a frame with a title bar.
+	if wants_frame(m, c) {
+		c.nodecor = motif_undecorated(m, c)
+		if d, ok := eff.decorations.?; ok { c.nodecor = !d }
+		frame_attach(m, c)
+		if adopting {
+			// An adopted window keeps its content where it was: the frame goes around it.
+			c.x -= c.ext[0]
+			c.y -= c.ext[2]
+		}
+	}
+	xlib.SelectInput(m.dpy, w, CLIENT_EVENT_MASK)
 	grabbuttons(m, c, false)
 	if !c.isfloating {
 		c.isfloating = trans != 0 || c.isfixed
 		c.oldstate = c.isfloating
 	}
-	if c.isfloating && !c.isfullscreen && !adopting && !c.ispip && c.kind != .Dock && c.kind != .Desktop {
-		place_floating(m, c, parent)
+	if !adopting && !c.isfullscreen && !c.ispip && c.kind != .Dock && c.kind != .Desktop {
+		if c.frame != 0 {
+			if !has_position_hint(m, c) || parent != nil {
+				place_new(m, c, parent)
+			} else {
+				keep_reachable(m, c)
+			}
+		} else if c.isfloating {
+			place_floating(m, c, parent)
+		}
+		apply_rule_geometry(m, c, &eff)
 	}
+	focus_it := !c.nofocus
+	if f, ok := eff.focus.?; ok { focus_it = focus_it && f } else if m.settings.floating { focus_it = focus_it && m.settings.focus_new }
+	sel := c.mon.sel
 	if c.kind == .Desktop {
 		xlib.LowerWindow(m.dpy, c.win)
-	} else if c.isfloating {
-		xlib.RaiseWindow(m.dpy, c.win)
+	} else if !focus_it && sel != nil && sel != c && (c.isfloating || m.settings.floating) {
+		// Not focused: it opens right below the focused window.
+		wc2: xlib.XWindowChanges
+		wc2.sibling = top_window(sel)
+		wc2.stack_mode = .Below
+		xlib.ConfigureWindow(m.dpy, top_window(c), {.CWSibling, .CWStackMode}, &wc2)
+	} else if c.isfloating || c.frame != 0 {
+		xlib.RaiseWindow(m.dpy, top_window(c))
 	}
 	attach(c)
-	attachstack(c)
+	if focus_it || sel == nil || sel.mon != c.mon {
+		attachstack(c)
+	} else {
+		// Right after the focused window in the focus order.
+		c.snext = sel.snext
+		sel.snext = c
+	}
 	ewmh_client_added(m, c)
-	xlib.MoveResizeWindow(m.dpy, c.win, c.x + 2 * m.sw, c.y, u32(c.w), u32(c.h)) // some windows require this
+	if c.frame != 0 {
+		frame_apply(m, c, c.x + 2 * m.sw, c.y)
+	} else {
+		xlib.MoveResizeWindow(m.dpy, c.win, c.x + 2 * m.sw, c.y, u32(c.w), u32(c.h)) // some windows require this
+	}
 	setclientstate(m, c, .NormalState)
-	if !c.nofocus {
+	if focus_it {
 		if c.mon == m.selmon { unfocus(m, m.selmon.sel, false) }
 		c.mon.sel = c
 	}
@@ -116,8 +161,30 @@ manage :: proc(m: ^Manager, w: xlib.Window, wa: ^xlib.XWindowAttributes, adoptin
 	if !adopting && c.kind == .Normal && !c.isfullscreen && is_visible(c) { anim_grow_in(m, c) }
 	apply_corners(m, c)
 	xlib.MapWindow(m.dpy, c.win)
+	if c.frame != 0 {
+		grip_update(m, c)
+		xlib.MapWindow(m.dpy, c.frame)
+		grip_restack(m, c)
+		write_allowed_actions(m, c)
+	}
+	apply_rule_states(m, c, &eff)
 	focus(m, nil)
-	log.debugf("wm: managing 0x%x %q (tags 0x%x%s)", c.win, c.name, c.tags, c.isfloating ? ", floating" : "")
+	log.debugf("wm: managing 0x%x %q (tags 0x%x%s%s)", c.win, c.name, c.tags, c.isfloating ? ", floating" : "", c.frame != 0 ? ", framed" : "")
+}
+
+// milk addition: a window adopted at startup keeps the states milk published
+// before it restarted (EWMH asks the window manager to preserve them):
+// minimized, on every area, always on top / below.
+@(private)
+restore_states :: proc(m: ^Manager, c: ^Client, eff: ^Rule_Effects) {
+	a := &m.atoms
+	states := tx.get_atoms(m.c, c.win, "_NET_WM_STATE")
+	if slice.contains(states, a.net_wm_state_hidden) || getstate(m, c.win) == int(xlib.WMHintState.IconicState) {
+		eff.minimized = true
+	}
+	if slice.contains(states, a.net_wm_state_sticky) { eff.sticky = true }
+	if slice.contains(states, a.net_wm_state_above) { eff.layer = .Above }
+	if slice.contains(states, a.net_wm_state_below) { eff.layer = .Below }
 }
 
 // milk addition: a window adopted at startup goes back to the desktop it had
@@ -132,6 +199,36 @@ restore_desktop :: proc(m: ^Manager, c: ^Client) {
 	} else if int(desk) < m.settings.tag_count {
 		c.tags = u32(1) << u32(desk)
 	}
+}
+
+// Whether the window asked for its position (USPosition, or a PPosition other than 0,0).
+has_position_hint :: proc(m: ^Manager, c: ^Client) -> bool {
+	hints: xlib.XSizeHints
+	supplied: xlib.SizeHints
+	if !status_ok(xlib.GetWMNormalHints(m.dpy, c.win, &hints, &supplied)) { return false }
+	if .USPosition in hints.flags { return true }
+	return .PPosition in hints.flags && (c.x + c.ext[0] != 0 || c.y + c.ext[2] != 0)
+}
+
+// A window placed by its own request keeps its title bar on the monitor.
+@(private)
+keep_reachable :: proc(m: ^Manager, c: ^Client) {
+	mon := c.mon
+	c.x = clamp(c.x, mon.wx - width(c) + 64, mon.wx + mon.ww - 64)
+	c.y = clamp(c.y, mon.wy, max(mon.wy, mon.wy + mon.wh - 32))
+}
+
+// _MOTIF_WM_HINTS without a title: client-side decorations (GTK headerbars,
+// browsers) and borderless windows.
+motif_undecorated :: proc(m: ^Manager, c: ^Client) -> bool {
+	// Its type is _MOTIF_WM_HINTS itself, so any type is accepted.
+	p, ok := tx.get_property(m.c, c.win, "_MOTIF_WM_HINTS", xlib.Atom(0), 5)
+	if !ok { return false }
+	defer tx.property_free(p)
+	if p.format != 32 || p.count < 3 { return false }
+	hints := ([^]uint)(p.data)[:p.count]
+	if hints[0] & 2 == 0 { return false } // MWM_HINTS_DECORATIONS
+	return hints[2] & (1 | 8) == 0 // neither MWM_DECOR_ALL nor MWM_DECOR_TITLE
 }
 
 // milk addition: a new floating window that did not ask for a position
@@ -162,11 +259,13 @@ unmanage :: proc(m: ^Manager, c: ^Client, destroyed: bool) {
 	detach(c)
 	detachstack(c)
 	if !destroyed {
+		if c.animating { anim_snap(m, c) }
 		wc: xlib.XWindowChanges
 		wc.border_width = c.oldbw
 		xlib.GrabServer(m.dpy) // avoid race conditions
 		previous := xlib.SetErrorHandler(xerror_dummy)
 		xlib.SelectInput(m.dpy, c.win, {})
+		frame_detach(m, c, false, false)
 		xlib.ConfigureWindow(m.dpy, c.win, {.CWBorderWidth}, &wc) // restore border
 		xlib.UngrabButton(m.dpy, xlib.AnyButton, {.AnyModifier}, c.win)
 		setclientstate(m, c, .WithdrawnState)
@@ -174,10 +273,13 @@ unmanage :: proc(m: ^Manager, c: ^Client, destroyed: bool) {
 			// EWMH: the WM removes these when a window is withdrawn (not on shutdown).
 			xlib.DeleteProperty(m.dpy, c.win, m.atoms.net_wm_desktop)
 			xlib.DeleteProperty(m.dpy, c.win, m.atoms.net_wm_state)
+			xlib.DeleteProperty(m.dpy, c.win, m.atoms.net_wm_allowed_actions)
 		}
 		xlib.Sync(m.dpy, false)
 		xlib.SetErrorHandler(previous)
 		xlib.UngrabServer(m.dpy)
+	} else {
+		frame_detach(m, c, true, false)
 	}
 	ewmh_client_removed(m, c)
 	log.debugf("wm: released 0x%x %q%s", c.win, c.name, destroyed ? " (destroyed)" : "")
@@ -209,10 +311,23 @@ is_milk_window :: proc(m: ^Manager, w: xlib.Window) -> bool {
 	return class == "Milk" || class == "Temenos"
 }
 
+// What the matching rules ask for beyond dwm's tags/floating/monitor (applied
+// by manage once the window has its frame).
+Rule_Effects :: struct {
+	x, y:          Maybe(i32),
+	center:        bool,
+	width, height: Maybe(i32),
+	maximized, minimized, fullscreen, sticky: bool,
+	decorations:   Maybe(bool),
+	layer:         Maybe(Layer),
+	focus:         Maybe(bool),
+}
+
 // dwm's applyrules with the semantics of config.WM_Rule: class and instance
 // match exactly, the title is a substring, empty fields match anything. A rule
 // with "pip": true marks the client as picture-in-picture (see pip.odin).
-applyrules :: proc(m: ^Manager, c: ^Client) {
+// Later rules win for the optional fields.
+applyrules :: proc(m: ^Manager, c: ^Client) -> (eff: Rule_Effects) {
 	c.isfloating = false
 	c.tags = 0
 	instance, class := class_hint(m, c.win)
@@ -229,10 +344,48 @@ applyrules :: proc(m: ^Manager, c: ^Client) {
 					break
 				}
 			}
+			if v, ok := r.x.?; ok { eff.x = v }
+			if v, ok := r.y.?; ok { eff.y = v }
+			if r.center { eff.center = true }
+			if v, ok := r.width.?; ok { eff.width = v }
+			if v, ok := r.height.?; ok { eff.height = v }
+			eff.maximized ||= r.maximized
+			eff.minimized ||= r.minimized
+			eff.fullscreen ||= r.fullscreen
+			eff.sticky ||= r.sticky
+			if v, ok := r.decorations.?; ok { eff.decorations = v }
+			if v, ok := r.layer.?; ok { eff.layer = v }
+			if v, ok := r.focus.?; ok { eff.focus = v }
 		}
 	}
 	mask := tagmask(m)
 	c.tags = c.tags & mask != 0 ? c.tags & mask : c.mon.tagset[c.mon.seltags]
+	return
+}
+
+// Size and place a new window as its rules say: x/y in the monitor's window
+// area (negative: from the right/bottom edge), "center", width/height.
+@(private)
+apply_rule_geometry :: proc(m: ^Manager, c: ^Client, eff: ^Rule_Effects) {
+	mon := c.mon
+	if v, ok := eff.width.?; ok { c.w = max(v, MIN_SIZE) }
+	if v, ok := eff.height.?; ok { c.h = max(v, MIN_SIZE) }
+	if eff.center {
+		c.x = mon.wx + (mon.ww - width(c)) / 2
+		c.y = mon.wy + (mon.wh - height(c)) / 2
+	}
+	if v, ok := eff.x.?; ok { c.x = v >= 0 ? mon.wx + v : mon.wx + mon.ww - width(c) + v + 1 }
+	if v, ok := eff.y.?; ok { c.y = v >= 0 ? mon.wy + v : mon.wy + mon.wh - height(c) + v + 1 }
+}
+
+// The states the rules ask for, once the window is mapped.
+@(private)
+apply_rule_states :: proc(m: ^Manager, c: ^Client, eff: ^Rule_Effects) {
+	if eff.sticky { set_sticky(m, c, true) }
+	if v, ok := eff.layer.?; ok { set_layer(m, c, v) }
+	if eff.fullscreen && !c.isfullscreen { setfullscreen(m, c, true) }
+	if eff.maximized && !c.isfullscreen { set_maximized(m, c, true, true) }
+	if eff.minimized { set_minimized(m, c, true) }
 }
 
 // Adjust a requested geometry to the client's size hints and keep it
@@ -245,13 +398,13 @@ applysizehints :: proc(m: ^Manager, c: ^Client, x, y, w, h: ^i32, interact: bool
 	if interact {
 		if x^ > m.sw { x^ = m.sw - width(c) }
 		if y^ > m.sh { y^ = m.sh - height(c) }
-		if x^ + w^ + 2 * c.bw < 0 { x^ = 0 }
-		if y^ + h^ + 2 * c.bw < 0 { y^ = 0 }
+		if x^ + w^ + ext_w(c) < 0 { x^ = 0 }
+		if y^ + h^ + ext_h(c) < 0 { y^ = 0 }
 	} else {
 		if x^ >= mon.wx + mon.ww { x^ = mon.wx + mon.ww - width(c) }
 		if y^ >= mon.wy + mon.wh { y^ = mon.wy + mon.wh - height(c) }
-		if x^ + w^ + 2 * c.bw <= mon.wx { x^ = mon.wx }
-		if y^ + h^ + 2 * c.bw <= mon.wy { y^ = mon.wy }
+		if x^ + w^ + ext_w(c) <= mon.wx { x^ = mon.wx }
+		if y^ + h^ + ext_h(c) <= mon.wy { y^ = mon.wy }
 	}
 	if h^ < MIN_SIZE { h^ = MIN_SIZE }
 	if w^ < MIN_SIZE { w^ = MIN_SIZE }
@@ -304,9 +457,11 @@ resizeclient_ex :: proc(m: ^Manager, c: ^Client, x, y, w, h: i32, animate: bool)
 	c.oldh = c.h; c.h = h
 	if animate && anim_begin(m, c) {
 		// The border changes at once (fullscreen); the geometry follows the animation.
-		wc: xlib.XWindowChanges
-		wc.border_width = c.bw
-		xlib.ConfigureWindow(m.dpy, c.win, {.CWBorderWidth}, &wc)
+		if c.frame == 0 {
+			wc: xlib.XWindowChanges
+			wc.border_width = c.bw
+			xlib.ConfigureWindow(m.dpy, c.win, {.CWBorderWidth}, &wc)
+		}
 		configure(m, c)
 		return
 	}
@@ -315,7 +470,8 @@ resizeclient_ex :: proc(m: ^Manager, c: ^Client, x, y, w, h: i32, animate: bool)
 	xlib.Sync(m.dpy, false)
 }
 
-// Synthetic ConfigureNotify with the geometry we gave the client (ICCCM 4.1.5).
+// Synthetic ConfigureNotify with the geometry we gave the client (ICCCM 4.1.5);
+// a framed client learns where its content is on the root window.
 configure :: proc(m: ^Manager, c: ^Client) {
 	ev: xlib.XEvent
 	ev.xconfigure = xlib.XConfigureEvent{
@@ -323,8 +479,8 @@ configure :: proc(m: ^Manager, c: ^Client) {
 		display           = m.dpy,
 		event             = c.win,
 		window            = c.win,
-		x                 = c.x,
-		y                 = c.y,
+		x                 = c.x + c.ext[0],
+		y                 = c.y + c.ext[2],
 		width             = c.w,
 		height            = c.h,
 		border_width      = c.bw,
@@ -543,8 +699,10 @@ setfullscreen :: proc(m: ^Manager, c: ^Client, fullscreen: bool) {
 		c.fsbw = c.bw
 		c.bw = 0
 		c.isfloating = true
+		if c.frame != 0 { frame_refresh(m, c, apply = false) } // no title bar, no border
 		resizeclient(m, c, c.mon.mx, c.mon.my, c.mon.mw, c.mon.mh)
-		xlib.RaiseWindow(m.dpy, c.win)
+		xlib.RaiseWindow(m.dpy, top_window(c))
+		grip_restack(m, c)
 		m.ewmh.stacking_dirty = true
 	} else if !fullscreen && c.isfullscreen {
 		write_state_atom(m, c, m.atoms.net_wm_state_fullscreen, false)
@@ -555,6 +713,11 @@ setfullscreen :: proc(m: ^Manager, c: ^Client, fullscreen: bool) {
 		c.y = c.oldy
 		c.w = c.oldw
 		c.h = c.oldh
+		if c.frame != 0 {
+			// oldx/oldy hold the content's place: the frame goes back around it.
+			c.bw = 0
+			frame_refresh(m, c, apply = false)
+		}
 		resizeclient(m, c, c.x, c.y, c.w, c.h)
 		arrange(m, c.mon)
 	}

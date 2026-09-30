@@ -107,7 +107,7 @@ foreign libdbus {
 
 SERVER_NAME    :: "milk"
 SERVER_VENDOR  :: "Temenos"
-SERVER_VERSION :: "0.1.0"
+SERVER_VERSION :: "1.1.0"
 SPEC_VERSION   :: "1.2"
 
 Close_Reason :: enum u32 {

@@ -1,6 +1,6 @@
 // Quick settings: the gear widget opens a small Material-style card with the
-// options people tweak most (bar position/style/height/opacity, window gaps/borders,
-// master size, animations, the area toast). Each change is written straight
+// options people tweak most (bar position/style/height/opacity, the window
+// mode, window gaps/borders, master size (tiling only), animations, the area toast). Each change is written straight
 // into milk.json and applied by reloading the configuration, so the file
 // stays the single source of truth. Keys are rewritten in sorted order.
 package bar
@@ -25,7 +25,7 @@ import tx "../tx"
 
 @(private)
 Settings_Action :: enum {
-	None, Position_Top, Position_Bottom, Style_Full, Style_Floating, Height, Opacity, Gaps, Border, Master,
+	None, Position_Top, Position_Bottom, Style_Full, Style_Floating, Height, Opacity, Mode_Tiling, Mode_Floating, Gaps, Border, Master,
 	Anim_Off, Anim_Fast, Anim_Normal, Indicator, All_Settings, Edit,
 }
 
@@ -78,8 +78,9 @@ settings_toggle :: proc(b: ^Bar, w: ^Widget) {
 @(private)
 tr :: proc(b: ^Bar, pt, en: string) -> string { return config.tr(b.cfg.bar.language, pt, en) }
 
+// The master area only means something in the tiling mode.
 @(private)
-settings_rows :: proc(b: ^Bar) -> int { return 9 }
+settings_rows :: proc(b: ^Bar) -> int { return b.cfg.wm.mode == "floating" ? 9 : 10 }
 
 @(private)
 anim_labels :: proc(b: ^Bar) -> [3]string {
@@ -179,6 +180,8 @@ settings_apply :: proc(b: ^Bar, action: Settings_Action, dir: int) {
 	case .Opacity:
 		v := clamp(math.round((cfg.bar.opacity + 0.05 * f64(dir)) * 100) / 100, 0.3, 1)
 		settings_write(b, {"bar", "opacity"}, json.Float(v))
+	case .Mode_Tiling:   settings_write(b, {"wm", "mode"}, json.String("tiling"))
+	case .Mode_Floating: settings_write(b, {"wm", "mode"}, json.String("floating"))
 	case .Gaps:
 		settings_write(b, {"wm", "gaps"}, json.Integer(clamp(cfg.wm.gaps + 2 * dir, 0, 60)))
 	case .Border:
@@ -330,15 +333,23 @@ settings_draw :: proc(b: ^Bar) {
 	label(pa, left, row_y, tr(b, "Opacidade da barra", "Bar opacity"))
 	stepper(pa, right, row_y, fmt.tprintf("%d%%", int(math.round(cfg.bar.opacity * 100))), .Opacity)
 	row_y += SET_ROW
+	tiling_l, floating_l := tr(b, "Lado a lado", "Tiling"), tr(b, "Flutuantes", "Floating")
+	mode_w := max(segment_width(b, tiling_l), segment_width(b, floating_l))
+	floating := cfg.wm.mode == "floating"
+	label(pa, left, row_y, tr(b, "Janelas", "Windows"))
+	segments(pa, right, row_y, {tiling_l, floating_l}, {mode_w, mode_w}, {.Mode_Tiling, .Mode_Floating}, floating ? 1 : 0)
+	row_y += SET_ROW
 	label(pa, left, row_y, tr(b, "Espaçamento (gaps)", "Gaps"))
 	stepper(pa, right, row_y, fmt.tprintf("%d px", cfg.wm.gaps), .Gaps)
 	row_y += SET_ROW
 	label(pa, left, row_y, tr(b, "Borda das janelas", "Window borders"))
 	stepper(pa, right, row_y, fmt.tprintf("%d px", cfg.wm.border_width), .Border)
 	row_y += SET_ROW
-	label(pa, left, row_y, tr(b, "Área mestre", "Master size"))
-	stepper(pa, right, row_y, fmt.tprintf("%d%%", int(math.round(cfg.wm.master_factor * 100))), .Master)
-	row_y += SET_ROW
+	if !floating {
+		label(pa, left, row_y, tr(b, "Área mestre", "Master size"))
+		stepper(pa, right, row_y, fmt.tprintf("%d%%", int(math.round(cfg.wm.master_factor * 100))), .Master)
+		row_y += SET_ROW
+	}
 
 	// Animation speed: the closest preset is selected.
 	label(pa, left, row_y, tr(b, "Animações", "Animations"))

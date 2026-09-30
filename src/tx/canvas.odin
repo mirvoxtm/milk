@@ -178,9 +178,11 @@ canvas_stroke_rounded_rect :: proc(cv: ^Canvas, r: Rect, radius: f32, width: f32
 			dx := px - cx
 			dy := py - cy
 			d := math.sqrt(dx * dx + dy * dy)
-			// distance to the rounded edge, positive inside
-			inside := rad - d
-			if inside < 0 && rad == 0 { inside = 0 }
+			// Distance to the rounded edge, positive inside: to the arc in a
+			// corner, to the nearest side elsewhere (a small radius must not
+			// fill the middle).
+			in_corner := (px < left || px > right) && (py < top || py > bottom)
+			inside := rad - d if in_corner else min(min(px - f32(r.x), f32(r.x + r.w) - px), min(py - f32(r.y), f32(r.y + r.h) - py))
 			// approximate: outer coverage minus inner coverage
 			outer := clamp(inside + 0.5, 0, 1)
 			inner := clamp(inside - width + 0.5, 0, 1)
@@ -321,4 +323,29 @@ canvas_upload :: proc(c: ^Connection, cv: Canvas, dst: xlib.Drawable, x, y: i32)
 	xlib.FreeGC(c.dpy, gc)
 	ximg.data = nil // the pixels belong to the canvas
 	xlib.DestroyImage(ximg)
+}
+
+// Anti-aliased straight line of `width` pixels with round caps (title bar
+// buttons, menu check marks and arrows).
+canvas_stroke_line :: proc(cv: ^Canvas, x0, y0, x1, y1: f32, width: f32, c: Color) {
+	half := max(width, 0.5) / 2
+	bx0 := i32(math.floor(min(x0, x1) - half - 1))
+	by0 := i32(math.floor(min(y0, y1) - half - 1))
+	bx1 := i32(math.ceil(max(x0, x1) + half + 1))
+	by1 := i32(math.ceil(max(y0, y1) + half + 1))
+	dx, dy := x1 - x0, y1 - y0
+	len2 := dx * dx + dy * dy
+	for y in max(by0, 0) ..< min(by1, cv.h) {
+		row := int(y) * int(cv.w)
+		py := f32(y) + 0.5
+		for x in max(bx0, 0) ..< min(bx1, cv.w) {
+			px := f32(x) + 0.5
+			t: f32 = 0
+			if len2 > 0 { t = clamp(((px - x0) * dx + (py - y0) * dy) / len2, 0, 1) }
+			qx, qy := x0 + t * dx - px, y0 + t * dy - py
+			d := math.sqrt(qx * qx + qy * qy)
+			coverage := clamp(half - d + 0.5, 0, 1)
+			if coverage > 0 { cv.px[row + int(x)] = blend_px(cv.px[row + int(x)], c, coverage) }
+		}
+	}
 }

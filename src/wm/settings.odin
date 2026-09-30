@@ -9,16 +9,54 @@ import "core:path/filepath"
 import "core:strings"
 import xlib "vendor:x11/xlib"
 import config "../config"
+import menu "../menu"
+import tx "../tx"
 
 // A dwm rule (config.WM_Rule): class/instance match exactly, title is a substring.
+// The optional fields place and dress the window when it appears (openbox's <applications>).
 Rule :: struct {
-	class:    string,
-	instance: string,
-	title:    string,
-	tags:     u32,  // 0 = the current tags
-	floating: bool,
-	monitor:  int,  // -1 = the current monitor
-	pip:      bool, // treat as a picture-in-picture window
+	class:       string,
+	instance:    string,
+	title:       string,
+	tags:        u32,  // 0 = the current tags
+	floating:    bool,
+	monitor:     int,  // -1 = the current monitor
+	pip:         bool, // treat as a picture-in-picture window
+	x, y:        Maybe(i32),
+	center:      bool,
+	width:       Maybe(i32),
+	height:      Maybe(i32),
+	maximized:   bool,
+	minimized:   bool,
+	fullscreen:  bool,
+	sticky:      bool,
+	decorations: Maybe(bool),
+	layer:       Maybe(Layer),
+	focus:       Maybe(bool),
+}
+
+// Where new floating windows appear (wm.placement).
+Placement :: enum u8 { Smart, Center, Mouse, Cascade }
+
+// A wm.keys entry: the key runs a built-in action (actions.odin run_action).
+Key_Action :: struct {
+	mod:    xlib.InputMask,
+	keysym: xlib.KeySym,
+	action: string,
+}
+
+// A wm.mouse entry ("context:mods+button" → action).
+Mouse_Binding :: struct {
+	ctx:    string, // title | icon | root | client
+	mod:    xlib.InputMask,
+	button: u32, // 1..5; 0 = double click
+	action: string,
+}
+
+// Colours the floating mode draws with (title bars, the window switcher).
+Decor_Colors :: struct {
+	active_bg, inactive_bg, active_fg, inactive_fg: tx.Color,
+	bg, fg, muted, surface, accent, accent_fg, warning: tx.Color,
 }
 
 // An extra key binding from wm.bindings: spawn `command`.
@@ -49,6 +87,29 @@ Settings :: struct {
 	rules:               []Rule,
 	bindings:            []Binding,
 	desktop_names:       []string, // tag_count entries
+	// Floating mode.
+	floating:            bool,
+	title_height:        i32,
+	title_layout:        string, // letters, see config.Title_Bar_Options
+	title_align:         int,    // 0 left, 1 centre, 2 right
+	title_font:          string, // fontconfig pattern
+	title_font_px:       i32,
+	title_circles:       bool,   // coloured dots instead of icons
+	colors:              Decor_Colors,
+	placement:           Placement,
+	snap_distance:       i32,
+	snap_layouts:        bool,
+	resize_margin:       i32,
+	focus_new:           bool,
+	raise_on_focus:      bool,
+	key_actions:         []Key_Action,
+	mouse:               []Mouse_Binding,
+	root_menu:           []config.Menu_Item, // wm.menu (deep copy); empty with has_menu = false: milk's menu
+	has_menu:            bool,
+	language:            config.Language,
+	menu_style:          menu.Style, // strings owned
+	desktop_icons:       bool,       // linux.desktopIcons.enabled: the root menu offers the icon actions
+	icon_font_file:      string,     // the bar's Tabler font (window switcher icons)
 }
 
 // Clone what the window manager needs from the configuration.
@@ -77,13 +138,29 @@ settings_from_config :: proc(cfg: ^config.Config) -> Settings {
 	rules := make([]Rule, len(w.rules))
 	for r, i in w.rules {
 		rules[i] = Rule{
-			class    = strings.clone(r.class),
-			instance = strings.clone(r.instance),
-			title    = strings.clone(r.title),
-			tags     = u32(r.tags & 0xFFFFFFFF),
-			floating = r.floating,
-			monitor  = r.monitor,
-			pip      = r.pip,
+			class      = strings.clone(r.class),
+			instance   = strings.clone(r.instance),
+			title      = strings.clone(r.title),
+			tags       = u32(r.tags & 0xFFFFFFFF),
+			floating   = r.floating,
+			monitor    = r.monitor,
+			pip        = r.pip,
+			center     = r.center,
+			maximized  = r.maximized,
+			minimized  = r.minimized,
+			fullscreen = r.fullscreen,
+			sticky     = r.sticky,
+			decorations = r.decorations,
+			focus      = r.focus,
+		}
+		if v, ok := r.x.?; ok { rules[i].x = i32(v) }
+		if v, ok := r.y.?; ok { rules[i].y = i32(v) }
+		if v, ok := r.width.?; ok { rules[i].width = i32(v) }
+		if v, ok := r.height.?; ok { rules[i].height = i32(v) }
+		switch r.layer {
+		case "above":  rules[i].layer = .Above
+		case "below":  rules[i].layer = .Below
+		case "normal": rules[i].layer = .Normal
 		}
 	}
 	s.rules = rules
@@ -109,7 +186,114 @@ settings_from_config :: proc(cfg: ^config.Config) -> Settings {
 		}
 	}
 	s.desktop_names = names
+
+	floating_from_config(cfg, &s)
 	return s
+}
+
+// The floating-mode part of the settings.
+@(private)
+floating_from_config :: proc(cfg: ^config.Config, s: ^Settings) {
+	w := &cfg.wm
+	tb := &w.title_bar
+	s.floating = w.mode == "floating"
+	s.title_height = i32(clamp(tb.height, 16, 80))
+	s.title_layout = strings.clone(tb.layout)
+	switch tb.align {
+	case "center": s.title_align = 1
+	case "right":  s.title_align = 2
+	case:          s.title_align = 0
+	}
+	s.title_font = strings.clone(tb.font != "" ? tb.font : cfg.bar.font)
+	s.title_font_px = i32(tb.font_size > 0 ? tb.font_size : max(cfg.bar.font_size - 1, 9))
+	s.title_circles = tb.button_style == "circles"
+
+	t := &cfg.bar.theme
+	col := &s.colors
+	col.bg = tx.color_from_hex(t.background)
+	col.fg = tx.color_from_hex(t.foreground)
+	col.muted = tx.color_from_hex(t.muted)
+	col.surface = tx.color_from_hex(t.surface)
+	col.accent = tx.color_from_hex(t.accent)
+	col.accent_fg = tx.color_from_hex(t.accent_foreground)
+	col.warning = tx.color_from_hex(t.warning)
+	pick :: proc(hex: string, fallback: tx.Color) -> tx.Color { return hex != "" ? tx.color_from_hex(hex, fallback) : fallback }
+	col.active_bg = pick(tb.active_color, col.bg)
+	col.inactive_bg = pick(tb.inactive_color, tx.color_mix(col.bg, col.surface, 0.7))
+	col.active_fg = pick(tb.active_text, col.fg)
+	col.inactive_fg = pick(tb.inactive_text, col.muted)
+
+	switch w.placement {
+	case "center":  s.placement = .Center
+	case "mouse":   s.placement = .Mouse
+	case "cascade": s.placement = .Cascade
+	case:           s.placement = .Smart
+	}
+	s.snap_distance = i32(clamp(w.snap_distance, 0, 200))
+	s.snap_layouts = w.snap_layouts
+	s.resize_margin = i32(clamp(w.resize_margin, 0, 40))
+	s.focus_new = w.focus_new
+	s.raise_on_focus = w.raise_on_focus
+
+	keys := make([dynamic]Key_Action)
+	for spec, action in w.keys {
+		mod, sym, ok := parse_key_spec(spec, s.modkey)
+		if !ok {
+			log.warnf("wm: ignoring wm.keys %q: expected modifiers and a key name, e.g. \"super+Up\"", spec)
+			continue
+		}
+		append(&keys, Key_Action{mod = mod, keysym = sym, action = strings.clone(action)})
+	}
+	s.key_actions = keys[:]
+
+	mouse := make([dynamic]Mouse_Binding)
+	for spec, action in w.mouse {
+		colon := strings.index_byte(spec, ':')
+		if colon < 0 { continue }
+		parts := strings.split(spec[colon + 1:], "+", context.temp_allocator)
+		b := Mouse_Binding{ctx = strings.clone(spec[:colon]), action = strings.clone(action)}
+		for part in parts[:len(parts) - 1] {
+			switch strings.to_lower(part, context.temp_allocator) {
+			case "super", "win": b.mod += {.Mod4Mask}
+			case "alt":          b.mod += {.Mod1Mask}
+			case "ctrl", "control": b.mod += {.ControlMask}
+			case "shift":        b.mod += {.ShiftMask}
+			case "mod":          b.mod += s.modkey
+			}
+		}
+		switch parts[len(parts) - 1] {
+		case "left":        b.button = 1
+		case "middle":      b.button = 2
+		case "right":       b.button = 3
+		case "scroll-up":   b.button = 4
+		case "scroll-down": b.button = 5
+		case "double":      b.button = 0
+		}
+		append(&mouse, b)
+	}
+	s.mouse = mouse[:]
+
+	s.has_menu = w.has_menu
+	s.root_menu = clone_menu_items(w.menu)
+	s.language = cfg.bar.language
+	s.menu_style = menu.style_from_config(cfg)
+	s.menu_style.font = strings.clone(s.menu_style.font)
+	s.menu_style.icon_font_file = strings.clone(s.menu_style.icon_font_file)
+	s.icon_font_file = strings.clone(cfg.bar.icon_font_file)
+	s.desktop_icons = cfg.linux.desktop_icons.enabled
+}
+
+@(private)
+clone_menu_items :: proc(items: []config.Menu_Item) -> []config.Menu_Item {
+	if len(items) == 0 { return nil }
+	out := make([]config.Menu_Item, len(items))
+	for it, i in items {
+		out[i] = config.Menu_Item{
+			label = strings.clone(it.label), action = strings.clone(it.action), command = strings.clone(it.command),
+			separator = it.separator, items = clone_menu_items(it.items),
+		}
+	}
+	return out
 }
 
 // Path of a helper script shipped in contrib/ next to bin/ (quoted for sh -c).
@@ -156,6 +340,16 @@ settings_destroy :: proc(s: ^Settings) {
 	delete(s.bindings)
 	for n in s.desktop_names { delete(n) }
 	delete(s.desktop_names)
+	delete(s.title_layout)
+	delete(s.title_font)
+	for k in s.key_actions { delete(k.action) }
+	delete(s.key_actions)
+	for b in s.mouse { delete(b.ctx); delete(b.action) }
+	delete(s.mouse)
+	config.destroy_menu_items(s.root_menu)
+	delete(s.menu_style.font)
+	delete(s.menu_style.icon_font_file)
+	delete(s.icon_font_file)
 	s^ = {}
 }
 

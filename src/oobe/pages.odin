@@ -36,20 +36,21 @@ draw_welcome :: proc(w: ^Wizard, cv: ^tx.Canvas) {
 	text_centered(w, w.f_title, {area.x, y, area.w, 44}, tr(w, "Bem-vindo ao milk", "Welcome to milk"), th.fg)
 	y += 44
 	text_centered(w, w.f_body, {area.x, y, area.w, 30},
-	              tr(w, "Vamos deixar a sua área de trabalho do seu jeito em quatro passos rápidos.",
-	                    "Let's make your desktop yours in four quick steps."), mix(th.fg, th.muted, 0.55))
+	              tr(w, "Vamos deixar a sua área de trabalho do seu jeito em cinco passos rápidos.",
+	                    "Let's make your desktop yours in five quick steps."), mix(th.fg, th.muted, 0.55))
 	y += 30 + 40
 
 	Feature :: struct { icon: Icon, title, desc: string }
-	features := [4]Feature{
+	features := [5]Feature{
 		{.Palette, tr(w, "Tema", "Theme"), tr(w, "Claro ou escuro", "Light or dark")},
 		{.Keyboard, tr(w, "Teclado", "Keyboard"), tr(w, "Layout e variante", "Layout and variant")},
 		{.Photo, tr(w, "Papéis de parede", "Wallpapers"), tr(w, "Um para todas ou um por área", "One for all or one per area")},
 		{.Layout_Top, tr(w, "Barra", "Bar"), tr(w, "Posição e estilo", "Position and style")},
+		{.App_Window, tr(w, "Janelas", "Windows"), tr(w, "Lado a lado ou flutuantes", "Tiling or floating")},
 	}
 	gap: i32 = 16
-	fw := min(i32(230), (area.w - 3 * gap) / 4)
-	x := cx - (4 * fw + 3 * gap) / 2
+	fw := min(i32(210), (area.w - 4 * gap) / 5)
+	x := cx - (5 * fw + 4 * gap) / 2
 	for f in features {
 		r := tx.Rect{x, y, fw, feature_h}
 		tx.canvas_fill_rounded_rect(cv, r, 20, th.field)
@@ -63,7 +64,7 @@ draw_welcome :: proc(w: ^Wizard, cv: ^tx.Canvas) {
 	y += feature_h + 28
 
 	// The language, so the rest of the wizard is already in it.
-	lang_w := min(i32(620), 4 * fw + 3 * gap)
+	lang_w := min(i32(620), 5 * fw + 4 * gap)
 	draw_language_control(w, cv, {cx - lang_w / 2, y, lang_w, lang_h})
 }
 
@@ -651,7 +652,11 @@ draw_summary_page :: proc(w: ^Wizard, cv: ^tx.Canvas) {
 	my := c.y + max((c.h - strip_h - mh) / 2, 0) / 2
 	mock := tx.Rect{c.x, my, mw, mh}
 	shadow(cv, mock, 16, 5, th.dark ? 30 : 14, 4)
-	draw_mock(w, cv, mock, &w.theme, area_choice(w, 0), w.bar_top, w.bar_floating, 16)
+	if w.wm_floating {
+		draw_float_mock(w, cv, mock, area_choice(w, 0), w.desktop_icons)
+	} else {
+		draw_mock(w, cv, mock, &w.theme, area_choice(w, 0), w.bar_top, w.bar_floating, 16)
+	}
 	if w.wp_per_area {
 		x := c.x
 		y := mock.y + mock.h + 14
@@ -683,14 +688,17 @@ draw_summary_page :: proc(w: ^Wizard, cv: ^tx.Canvas) {
 	}
 	bar_value := fmt.tprintf("%s · %s", w.bar_top ? tr(w, "Topo", "Top") : tr(w, "Base", "Bottom"),
 	                         w.bar_floating ? tr(w, "flutuante", "floating") : tr(w, "de ponta a ponta", "edge to edge"))
-	rows := [4]Row{
+	win_value := w.wm_floating ? tr(w, "Flutuantes", "Floating") : tr(w, "Lado a lado", "Tiling")
+	if w.desktop_icons { win_value = fmt.tprintf("%s · %s", win_value, tr(w, "arquivos na área de trabalho", "files on the desktop")) }
+	rows := [5]Row{
 		{.Palette, tr(w, "TEMA", "THEME"), theme_value, .Theme},
 		{.Keyboard, tr(w, "TECLADO", "KEYBOARD"), kb_value, .Keyboard},
 		{.Photo, tr(w, "PAPÉIS DE PAREDE", "WALLPAPERS"), wp_value, .Wallpaper},
 		{w.bar_top ? .Layout_Top : .Layout_Bottom, tr(w, "BARRA", "BAR"), bar_value, .Bar},
+		{.App_Window, tr(w, "JANELAS", "WINDOWS"), win_value, .Windows},
 	}
-	row_h: i32 = 72
-	y := mock.y + max((mock.h - 4 * row_h) / 2, 0)
+	row_h: i32 = 66
+	y := mock.y + max((mock.h - i32(len(rows)) * row_h) / 2, 0)
 	for row in rows {
 		r := tx.Rect{rx, y, rw, row_h - 8}
 		hot := hovered(w, .Goto_Page, int(row.page) + 100)
