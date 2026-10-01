@@ -46,6 +46,10 @@ with matugen, the color scheme can even be picked up by your wallpaper!
 
 every area keeps its own wallpaper, colours and icons. right-click a desktop icon → **show on** to keep it to some areas (steam on area 4 only).
 
+## everything a session needs
+
+- a **system tray** in the bar, for both kinds of tray icons (add "system tray" in settings → bar → widgets if your bar is older than it).
+
 ## updating
 updating from a version that kept `milk.json` inside the clone: if `git pull` refuses because of it, run `git checkout -- milk.json && git pull`. 
 

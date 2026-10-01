@@ -22,6 +22,7 @@ BAR_WIDGET_INFO := []Bar_Widget_Info{
 	{"workspaces", .Layout_Grid, "Áreas", "Workspaces"},
 	{"tasks", .Box_Multiple, "Janelas abertas", "Open windows"},
 	{"media", .Player_Play, "Mídia", "Media"},
+	{"tray", .Apps, "Bandeja do sistema", "System tray"}, // milk tray
 	{"clipboard", .Clipboard, "Transferência", "Clipboard"},
 	{"network", .Wifi, "Rede", "Network"},
 	{"bluetooth", .Bluetooth, "Bluetooth", "Bluetooth"},
@@ -36,7 +37,7 @@ BAR_WIDGET_INFO := []Bar_Widget_Info{
 	{"spacer", .Space, "Espaço", "Spacer"},
 }
 
-@(private) SPACER_WIDGET :: 16 // index of "spacer" in BAR_WIDGET_INFO (may be used any number of times)
+@(private) SPACER_WIDGET :: 17 // index of "spacer" in BAR_WIDGET_INFO (may be used any number of times)
 
 // A ready-made arrangement; position/style "" keep the current ones.
 @(private)
@@ -51,12 +52,12 @@ Bar_Layout_Preset :: struct {
 BAR_LAYOUT_PRESETS := []Bar_Layout_Preset{
 	{"milk", "milk", "O padrão: título à esquerda, áreas no centro", "The default: title left, areas centred",
 	 {"launcher", "active_window"}, {"workspaces", "media"},
-	 {"clipboard", "network", "bluetooth", "volume", "brightness", "battery", "date", "clock", "notifications", "settings", "session"}, "", ""},
+	 {"tray", "clipboard", "network", "bluetooth", "volume", "brightness", "battery", "date", "clock", "notifications", "settings", "session"}, "", ""},
 	{"Mínimo", "Minimal", "Só áreas, relógio e o essencial", "Just areas, the clock and the essentials",
 	 {"workspaces"}, {"clock"}, {"network", "volume", "battery", "session"}, "", ""},
 	{"Clássico", "Classic", "Como no Windows: embaixo, relógio no canto", "Windows-like: bottom, clock in the corner",
 	 {"launcher", "workspaces", "active_window"}, {},
-	 {"clipboard", "network", "volume", "battery", "clock", "date", "notifications"}, "bottom", "full"},
+	 {"tray", "clipboard", "network", "volume", "battery", "clock", "date", "notifications"}, "bottom", "full"},
 	{"Centrado", "Centred", "Embaixo e flutuante, com o essencial no meio", "Floating at the bottom, essentials in the middle",
 	 {"workspaces"}, {"launcher", "active_window", "media"},
 	 {"network", "volume", "battery", "clock", "notifications", "session"}, "bottom", "floating"},

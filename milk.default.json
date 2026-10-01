@@ -23,6 +23,7 @@
     "dateFormat": "%a %d %b",
     "enabled": true,
     "end": [
+      "tray",
       "clipboard",
       "network",
       "bluetooth",

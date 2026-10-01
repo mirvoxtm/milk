@@ -23,6 +23,7 @@ Widget_Kind :: enum {
 	Active_Window,
 	Workspaces,
 	Tasks,
+	Tray, // milk tray: the system tray (bar/tray.odin)
 	Media,
 	Spacer,
 	Notifications,
@@ -46,6 +47,7 @@ WIDGET_IDS := [Widget_Kind]string{
 	.Active_Window = "active_window",
 	.Workspaces    = "workspaces",
 	.Tasks         = "tasks",
+	.Tray          = "tray",
 	.Media         = "media",
 	.Spacer        = "spacer",
 	.Notifications = "notifications",
@@ -295,6 +297,9 @@ measure :: proc(b: ^Bar, w: ^Widget, title_limit, media_limit, tasks_limit: i32)
 		return
 	case .Tasks:
 		measure_tasks(b, w, tasks_limit)
+		return
+	case .Tray:
+		measure_tray(b, w)
 		return
 	case .Launcher:
 		if b.has_launcher { w.image = &b.launcher } else { w.logo = true }
@@ -566,7 +571,7 @@ draw_workspaces :: proc(b: ^Bar, cv: ^tx.Canvas, w: ^Widget) {
 is_interactive :: proc(b: ^Bar, w: ^Widget) -> bool {
 	#partial switch w.kind {
 	case .Spacer, .Workspaces: return false
-	case .Tasks:               return true
+	case .Tasks, .Tray:        return true
 	case .Volume:              return b.vol.backend != .None || command_for(b, "volume") != ""
 	case .Brightness:          return true
 	case .Network, .Bluetooth: return true
@@ -581,6 +586,10 @@ is_interactive :: proc(b: ^Bar, w: ^Widget) -> bool {
 draw_widget_shapes :: proc(b: ^Bar, cv: ^tx.Canvas, w: ^Widget, hovered: bool) {
 	if w.kind == .Tasks {
 		draw_tasks(b, cv, w, hovered) // one hover pill per task
+		return
+	}
+	if w.kind == .Tray {
+		draw_tray(b, cv, w, hovered) // one hover pill per icon
 		return
 	}
 	h := b.body.h
@@ -609,6 +618,10 @@ draw_widget_shapes :: proc(b: ^Bar, cv: ^tx.Canvas, w: ^Widget, hovered: bool) {
 draw_widget_text :: proc(b: ^Bar, ts: ^tx.Text_Surface, w: ^Widget) {
 	if w.kind == .Tasks {
 		draw_tasks_text(b, ts, w)
+		return
+	}
+	if w.kind == .Tray {
+		draw_tray_text(b, ts, w)
 		return
 	}
 	x := b.body.x + w.x + w.pad
@@ -721,6 +734,10 @@ on_button :: proc(b: ^Bar, ev: ^xlib.XButtonEvent) {
 	log.debugf("Bar: button %d at x=%d on %v", i32(ev.button), ev.x, w.kind)
 	if w.kind == .Tasks {
 		tasks_button(b, w, ev) // every button acts on the task under the pointer
+		return
+	}
+	if w.kind == .Tray {
+		tray_button(b, w, ev) // every button acts on the icon under the pointer
 		return
 	}
 	switch i32(ev.button) {

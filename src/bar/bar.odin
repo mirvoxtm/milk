@@ -28,6 +28,7 @@ import "core:sys/posix"
 import xlib "vendor:x11/xlib"
 import tx "../tx"
 import config "../config"
+import tray "../tray"
 
 ROOT_EVENT_MASK :: xlib.EventMask{.PropertyChange, .SubstructureNotify}
 
@@ -92,6 +93,7 @@ Bar :: struct {
 	ws:              Workspaces_State,
 	active:          Active_State,
 	tasks:           Tasks_State,
+	tray:            Tray_State, // milk tray: the system tray (tray.odin)
 	media:           Media_State,
 	net:             Network_State,
 	bt:              Bluetooth_State,
@@ -204,6 +206,7 @@ destroy :: proc(b: ^Bar) {
 	unwatch_active(b)
 	clear_active(b)
 	tasks_destroy(b)
+	tray_destroy(b) // milk tray: hands the XEmbed icons back before the bar window goes
 	hide_window(b)
 	release_look(b)
 	delete(b.widgets)
@@ -247,6 +250,14 @@ start :: proc(b: ^Bar) {
 handle_event :: proc(b: ^Bar, ev: ^xlib.XEvent) -> bool {
 	if b == nil || !b.started || ev == nil { return false }
 	context.allocator = b.allocator
+	// milk tray: its menu, the tray manager window, the sockets and the icons.
+	if b.tray.t != nil && tray.handle_event(b.tray.t, ev) {
+		if b.need_flush {
+			tx.flush(b.c)
+			b.need_flush = false
+		}
+		return true
+	}
 	win := ev.xany.window
 	claimed := false
 	// A click anywhere else (the desktop, icon cells, other windows) closes the
@@ -297,6 +308,10 @@ tick :: proc(b: ^Bar, now: f64) {
 	reap_children(b)
 	service_jobs(b, now)
 	media_tick(b, now)
+	if b.tray.t != nil { // milk tray
+		tray.tick(b.tray.t, now)
+		if tray.take_changed(b.tray.t) { b.dirty = true }
+	}
 	if now >= b.next_poll {
 		poll_sources(b)
 		b.next_poll = now + POLL_INTERVAL
@@ -345,16 +360,18 @@ next_timeout :: proc(b: ^Bar, now: f64) -> f64 {
 		}
 	}
 	if len(b.children) > 0 { deadline = min(deadline, now + 1) }
+	if tt := tray.next_timeout(b.tray.t, now); tt >= 0 { deadline = min(deadline, now + tt) } // milk tray
 	return max(deadline - now, 0)
 }
 
 // Pipes of running helpers (poll them for input/HUP next to the X fd).
 poll_fds :: proc(b: ^Bar, allocator := context.temp_allocator) -> []i32 {
 	if b == nil { return nil }
-	fds := make([dynamic]i32, 0, len(b.jobs), allocator)
+	fds := make([dynamic]i32, 0, len(b.jobs) + 1, allocator)
 	for job in b.jobs {
 		if job.file != nil { append(&fds, job.fd) }
 	}
+	if fd := tray.poll_fd(b.tray.t); fd >= 0 { append(&fds, fd) } // milk tray: the session bus
 	return fds[:]
 }
 
@@ -362,6 +379,11 @@ poll_fds :: proc(b: ^Bar, allocator := context.temp_allocator) -> []i32 {
 handle_fd :: proc(b: ^Bar, fd: i32) {
 	if b == nil { return }
 	context.allocator = b.allocator
+	if b.tray.t != nil && fd == tray.poll_fd(b.tray.t) { // milk tray
+		tray.handle_fd(b.tray.t)
+		if tray.take_changed(b.tray.t) { b.dirty = true }
+		return
+	}
 	job := find_job(b, fd)
 	if job == nil { return }
 	read_job(b, job)
@@ -468,6 +490,7 @@ apply_config :: proc(b: ^Bar) -> bool {
 	load_launcher(b)
 	build_widgets(b)
 	tasks_configure(b)
+	tray_configure(b) // milk tray
 	b.vol.backend = pick_volume_backend(b)
 	b.hover = -1
 	b.dirty = true
@@ -559,6 +582,7 @@ show_window :: proc(b: ^Bar) {
 	apply_strut(b)
 	update_base(b)
 	b.mapped = true
+	if b.tray.t != nil { tray.attach(b.tray.t, b.win) } // milk tray: the sockets move in
 	render(b) // background first: no black flash on map
 	tx.map_window(b.c, b.win)
 	if b.overlay { tx.raise_window(b.c, b.win) }
@@ -569,6 +593,7 @@ show_window :: proc(b: ^Bar) {
 @(private)
 hide_window :: proc(b: ^Bar) {
 	if b.win == 0 { return }
+	if b.tray.t != nil { tray.attach(b.tray.t, 0) } // milk tray: park the sockets (and their icons) first
 	tx.unmap_window(b.c, b.win)
 	tx.destroy_window(b.c, b.win)
 	tx.pixmap_free(b.c, b.pixmap)
@@ -675,6 +700,7 @@ render :: proc(b: ^Bar) {
 	tx.set_background(b.c, b.win, pm)
 	tx.pixmap_free(b.c, b.pixmap)
 	b.pixmap = pm
+	tray.commit(b.tray.t) // milk tray: XEmbed icons over their slots, on the new background
 	tx.flush(b.c)
 }
 
@@ -689,9 +715,11 @@ handle_bar_event :: proc(b: ^Bar, ev: ^xlib.XEvent) {
 	case .MotionNotify:
 		set_hover(b, hit_widget(b, ev.xmotion.x))
 		tasks_pointer(b, ev.xmotion.x)
+		tray_pointer(b, ev.xmotion.x)
 	case .LeaveNotify:
 		set_hover(b, -1)
 		tasks_pointer(b, -1)
+		tray_pointer(b, -1)
 	}
 }
 

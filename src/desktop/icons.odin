@@ -126,6 +126,13 @@ icon_for :: proc(l: ^Icon_Loader, s: ^Shortcut) -> ^tx.Image {
 	return nil
 }
 
+// milk tray: an icon name or absolute path at the loader's size (nil when
+// not found); the image belongs to the loader's cache.
+lookup_icon :: proc(l: ^Icon_Loader, icon: string) -> ^tx.Image {
+	if icon == "" { return nil }
+	return icon_by_name_or_path(l, icon)
+}
+
 // Colour of the fallback glyph square: a hue derived from the name.
 glyph_color :: proc(name: string) -> tx.Color {
 	hue := f64(hash.crc32(transmute([]byte)name) % 360) / 360.0

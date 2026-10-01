@@ -4,6 +4,7 @@
 // on windows that are neither the root nor a managed client are left alone.
 package wm
 
+import "core:fmt"
 import xlib "vendor:x11/xlib"
 import tx "../tx"
 
@@ -290,6 +291,7 @@ maprequest :: proc(m: ^Manager, e: ^xlib.XEvent) -> bool {
 	wa: xlib.XWindowAttributes
 	if xlib.GetWindowAttributes(m.dpy, ev.window, &wa) == 0 || wa.override_redirect { return false }
 	if wintoclient(m, ev.window) != nil { return true }
+	if is_tray_icon(m, ev.window) { return true } // milk tray: the bar's system tray maps it
 	if is_milk_window(m, ev.window) {
 		// milk's own managed-style windows (e.g. the bar in dock mode) are
 		// mapped as they are, never managed.
@@ -298,6 +300,24 @@ maprequest :: proc(m: ^Manager, e: ^xlib.XEvent) -> bool {
 	}
 	manage(m, ev.window, &wa, false)
 	return true
+}
+
+// milk tray: an XEmbed tray icon is never managed. It may ask to be mapped
+// right before or after it docks; once docked it is no longer a child of the
+// root (the tray reparented it into the bar), and while a system tray runs
+// a window carrying _XEMBED_INFO is waiting to be docked by it.
+is_tray_icon :: proc(m: ^Manager, w: xlib.Window) -> bool {
+	root, parent: xlib.Window
+	children: [^]xlib.Window
+	n: u32
+	if xlib.QueryTree(m.dpy, w, &root, &parent, &children, &n) != xlib.Status(0) {
+		if children != nil { xlib.Free(children) }
+		if parent != m.root { return true }
+	}
+	info, has_info := tx.get_property(m.c, w, "_XEMBED_INFO", xlib.Atom(xlib.AnyPropertyType), 2)
+	if !has_info { return false }
+	tx.property_free(info)
+	return xlib.GetSelectionOwner(m.dpy, tx.atom(m.c, fmt.tprintf("_NET_SYSTEM_TRAY_S%d", m.c.screen))) != 0
 }
 
 // Moving the pointer over the root window onto another monitor selects it.

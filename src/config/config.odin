@@ -20,10 +20,11 @@ OVERRIDE_MODES      :: []string{"auto", "always", "never"}
 // stack of whoever uses it, and default_bar() hands these out to the loader.
 @(rodata) DEFAULT_BAR_START  := []string{"launcher", "active_window"}
 @(rodata) DEFAULT_BAR_CENTER := []string{"workspaces", "media"}
-@(rodata) DEFAULT_BAR_END    := []string{"clipboard", "network", "bluetooth", "volume", "brightness", "battery", "date", "clock", "notifications", "settings", "session"}
+@(rodata) DEFAULT_BAR_END    := []string{"tray", "clipboard", "network", "bluetooth", "volume", "brightness", "battery", "date", "clock", "notifications", "settings", "session"}
 BAR_WIDGETS         :: []string{"launcher", "active_window", "workspaces", "media", "spacer", "notifications", "clipboard",
                                  "recorder", "network", "bluetooth", "volume", "brightness", "battery", "date", "clock", "settings", "session",
-                                 "tasks"}
+                                 "tasks",
+                                 "tray"} // milk tray: the system tray
 DESKTOP_ICON_SORTS  :: []string{"name", "type", "modified"}
 DESKTOP_NEW_ICONS   :: []string{"every-area", "current-area"}
 

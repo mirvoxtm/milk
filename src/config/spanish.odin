@@ -288,6 +288,7 @@ SPANISH := [][2]string{
 	{"Active window", "Ventana activa"},
 	{"Workspaces", "Áreas"},
 	{"Open windows", "Ventanas abiertas"},
+	{"System tray", "Bandeja del sistema"}, // milk tray
 	{"Window", "Ventana"},
 	{"Media", "Multimedia"},
 	{"Network", "Red"},
