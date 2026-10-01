@@ -66,7 +66,7 @@ Manager :: struct {
 	shutting_down: bool,
 	quit:          bool, // Mod+Shift+q
 	reload:        bool, // Mod+Shift+r
-	panel_request: string, // Mod+v / Mod+n: "clipboard" | "notifications" (static strings)
+	panel_request: string, // Mod+v / Mod+n / Mod+Shift+l: "clipboard" | "notifications" | "lock" (static strings)
 	sw, sh:        i32,  // screen size
 	mons:          ^Monitor,
 	selmon:        ^Monitor,

@@ -70,6 +70,8 @@ build_bindings :: proc(m: ^Manager) {
 	add_key(m, MOD + SHIFT, .XK_r, reload_config)
 	act(m, MOD + SHIFT, .XK_f, "fullscreen")
 	add_key(m, MOD + SHIFT, .XK_s, spawn, {cmd = s.screenshot})
+	act(m, MOD + SHIFT, .XK_l, "lock") // free in both modes (Mod+l is the master size in tiling)
+	act(m, {}, xlib.KeySym(0x1008FF2D), "lock") // XF86ScreenSaver, the lock key of many keyboards
 	act(m, ALT, .XK_Tab, "switch-windows")
 	act(m, ALT + SHIFT, .XK_Tab, "switch-windows-reverse")
 	if s.floating {

@@ -134,6 +134,11 @@ open :: proc(m: ^Menu, c: ^tx.Connection, style: Style, items: []Item, x, y: i32
 
 is_open :: proc(m: ^Menu) -> bool { return m != nil && m.open }
 
+// Close whatever menu is open (its grabs would keep the lock screen out).
+close_all :: proc() {
+	if g_current != nil { close(g_current) }
+}
+
 // The id of the chosen entry, once (after handle_event returned true).
 take_result :: proc(m: ^Menu) -> (id: int, ok: bool) {
 	if m == nil || !m.has_result { return -1, false }

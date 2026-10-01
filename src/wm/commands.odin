@@ -156,6 +156,7 @@ run_action :: proc(m: ^Manager, spec: string, target: ^Client, ctx: Action_Ctx) 
 	case "exec":       spawn_command(m, arg)
 	case "clipboard":     m.panel_request = "clipboard"
 	case "notifications": m.panel_request = "notifications"
+	case "lock":          m.panel_request = "lock" // main.odin starts the lock screen (package lock)
 	case "desktop-new-folder":  m.desktop_request = "desktop-new-folder"
 	case "desktop-arrange":     m.desktop_request = "desktop-arrange"
 	case "desktop-open-folder": m.desktop_request = "desktop-open-folder"

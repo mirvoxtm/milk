@@ -45,6 +45,7 @@ Win_Command :: enum u8 {
 @(private) IC_SETTINGS :: 0xEB20
 @(private) IC_REFRESH  :: 0xEB13
 @(private) IC_LOGOUT   :: 0xEBA8
+@(private) IC_LOCK     :: 0xEAE2 // the lock screen (package lock)
 @(private) IC_MINUS    :: 0xEAF2
 @(private) IC_MAXIMIZE :: 0xEAEA
 @(private) IC_X        :: 0xEB55
@@ -177,6 +178,7 @@ default_root_menu :: proc(m: ^Manager, items: ^[dynamic]menu.Item) {
 	action(m, items, tr(m, "Configurações", "Settings"), "settings", IC_SETTINGS)
 	sep(items)
 	action(m, items, tr(m, "Recarregar", "Reload"), "reload", IC_REFRESH)
+	action(m, items, tr(m, "Bloquear", "Lock"), "lock", IC_LOCK)
 	action(m, items, tr(m, "Sair", "Log out"), "quit", IC_LOGOUT)
 }
 

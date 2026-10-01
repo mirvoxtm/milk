@@ -25,6 +25,7 @@ import clip "../clip"
 import config "../config"
 import desktop "../desktop"
 import nightlight "../nightlight"
+import lock "../lock"
 import notify "../notify"
 import oobe "../oobe"
 import tx "../tx"
@@ -69,6 +70,7 @@ commands:
   setup        run the setup wizard (theme, wallpapers, bar, keyboard) now
   settings     open the settings app (optionally on a section: wallpapers, windows, desktop...)
   switch N     ask the window manager to activate area N
+  lock         lock the screen (asks the running milk; locks by itself when none runs)
   version      print the version
 
 options:
@@ -106,6 +108,7 @@ main :: proc() {
 	case "switch":           code = cmd_switch(&opts)
 	case "setup":            code = cmd_setup(&opts)
 	case "settings":         code = cmd_settings(&opts)
+	case "lock":             code = cmd_lock(&opts) // session.odin
 	case "version":          fmt.println("milk", VERSION)
 	case "help":             usage()
 	case:
@@ -306,6 +309,7 @@ signal_handler :: proc "c" (sig: posix.Signal) {
 	#partial switch sig {
 	case .SIGTERM, .SIGINT: g_stop = true
 	case .SIGHUP:           g_reload = true
+	case .SIGUSR2:          g_lock = true // `milk lock` (session.odin)
 	case:
 	}
 	if g_wake_fd >= 0 {
@@ -328,7 +332,7 @@ install_signals :: proc() -> (wake_read: posix.FD, ok: bool) {
 	act.sa_handler = signal_handler
 	posix.sigemptyset(&act.sa_mask)
 	act.sa_flags = {.RESTART}
-	for sig in ([]posix.Signal{.SIGTERM, .SIGINT, .SIGHUP, .SIGCHLD}) {
+	for sig in ([]posix.Signal{.SIGTERM, .SIGINT, .SIGHUP, .SIGUSR2, .SIGCHLD}) {
 		posix.sigaction(sig, &act, nil)
 	}
 	ignore: posix.sigaction_t
@@ -411,6 +415,8 @@ Runner :: struct {
 	night:   ^nightlight.Night_Light, // owner of the screen gamma: night light and nightlight.set_dim
 	wake_fd: posix.FD,
 	compositor_on:    bool,                // lactase was asked to run (compositor.enabled)
+	idle:             ^lock.Manager,       // lock screen and idle stages (session.odin)
+	session:          Session_Menu,        // the bar's power menu (session.odin)
 	lactase_children: [dynamic]posix.pid_t, // lactase launchers not reaped yet
 }
 
@@ -458,6 +464,8 @@ bar_click :: proc(data: rawptr, id: string, anchor: tx.Rect) -> bool {
 		if r.bar != nil { bar.close_popups(r.bar) }
 		clip.toggle_panel(r.clips, anchor)
 		return true
+	case "session":
+		return open_session_menu(r, anchor) // session.odin
 	}
 	return false
 }
@@ -560,6 +568,8 @@ run :: proc(opts: ^Options, cfg: ^config.Config) -> int {
 	// connection closes, which puts the original ramps back.
 	r.night = nightlight.create(c, cfg)
 	defer nightlight.destroy(r.night, false)
+	session_start(&r)
+	defer session_stop(&r)
 
 	wake_read, sig_ok := install_signals()
 	if !sig_ok {
@@ -592,6 +602,7 @@ loop :: proc(r: ^Runner) {
 			// Dead keys typed into milk's text fields (the Wi-Fi password)
 			// are consumed by the input method and come back composed.
 			if tx.input_filter(&ev) { continue }
+			if session_event(r, &ev) { continue }
 			if r.manager != nil { wm.handle_event(r.manager, &ev) }
 			desktop.handle_event(r.daemon, &ev)
 			if r.bar != nil { bar.handle_event(r.bar, &ev) }
@@ -616,6 +627,8 @@ loop :: proc(r: ^Runner) {
 					if r.bar != nil { bar.close_popups(r.bar) }
 					notify.toggle_panel(r.notes)
 				}
+			case "lock":
+				lock.lock_now(r.idle, "lock action")
 			}
 			// The root menu's entries for the desktop icons.
 			if req := wm.desktop_requested(r.manager); req != "" { desktop.request(r.daemon, req) }
@@ -636,6 +649,8 @@ loop :: proc(r: ^Runner) {
 		if r.notes != nil { notify.tick(r.notes, now) }
 		if r.clips != nil { clip.tick(r.clips, now) }
 		if r.night != nil { nightlight.tick(r.night, now) }
+		session_tick(r)
+		lock.tick(r.idle, now)
 		if r.bar != nil && r.notes != nil { bar.set_badge(r.bar, "notifications", notify.unread_count(r.notes)) }
 
 		timeout := desktop.next_timeout(r.daemon, now)
@@ -659,6 +674,7 @@ loop :: proc(r: ^Runner) {
 			lt := nightlight.next_timeout(r.night, now)
 			if lt >= 0 && (timeout < 0 || lt < timeout) { timeout = lt }
 		}
+		if lt := lock.next_timeout(r.idle, now); lt >= 0 && (timeout < 0 || lt < timeout) { timeout = lt }
 
 		// Everything allocated from the temp allocator during this iteration is
 		// released here; the poll set is built afterwards so it stays valid.
@@ -673,9 +689,12 @@ loop :: proc(r: ^Runner) {
 		}
 		for fd in desktop.poll_fds(r.daemon) { append(&fds, posix.pollfd{fd = posix.FD(fd), events = {.IN}}) }
 		desktop_fds := len(fds) - 2 - bar_fds
+		notes_fds := 0
 		if r.notes != nil {
 			for fd in notify.poll_fds(r.notes) { append(&fds, posix.pollfd{fd = posix.FD(fd), events = {.IN}}) }
+			notes_fds = len(fds) - 2 - bar_fds - desktop_fds
 		}
+		for fd in lock.poll_fds(r.idle) { append(&fds, posix.pollfd{fd = posix.FD(fd), events = {.IN}}) }
 		if tx.pending(conn) > 0 { continue }
 
 		timeout_ms: c.int = -1
@@ -692,8 +711,10 @@ loop :: proc(r: ^Runner) {
 				if r.bar != nil { bar.handle_fd(r.bar, i32(pf.fd)) }
 			} else if i < bar_fds + desktop_fds {
 				desktop.handle_fd(r.daemon, i32(pf.fd))
-			} else if r.notes != nil {
-				notify.handle_fd(r.notes, i32(pf.fd))
+			} else if i < bar_fds + desktop_fds + notes_fds {
+				if r.notes != nil { notify.handle_fd(r.notes, i32(pf.fd)) }
+			} else {
+				lock.handle_fd(r.idle, i32(pf.fd))
 			}
 		}
 	}
@@ -726,6 +747,7 @@ reload :: proc(r: ^Runner) {
 	if r.notes != nil { notify.reload(r.notes, cfg) }
 	if r.clips != nil { clip.reload(r.clips, cfg) }
 	if r.night != nil { nightlight.reload(r.night, cfg) }
+	lock.reload(r.idle, cfg)
 	apply_keyboard(cfg)
 	write_rofi_theme(cfg)
 	oobe.refresh_wallpaper_theme_files(cfg)
@@ -761,6 +783,7 @@ reload_theme :: proc(r: ^Runner) {
 	if r.bar != nil { bar.retheme(r.bar, cfg) }
 	if r.notes != nil { notify.retheme(r.notes, cfg) }
 	if r.clips != nil { clip.reload(r.clips, cfg) }
+	lock.reload(r.idle, cfg)
 	write_rofi_theme(cfg)
 	oobe.refresh_wallpaper_theme_files(cfg)
 	config.destroy(old)

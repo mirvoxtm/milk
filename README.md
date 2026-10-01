@@ -49,6 +49,7 @@ every area keeps its own wallpaper, colours and icons. right-click a desktop ico
 ## everything a session needs
 
 - a **system tray** in the bar, for both kinds of tray icons (add "system tray" in settings → bar → widgets if your bar is older than it).
+- a **lock screen**: super+shift+l, after a while without use (the screen dims first) and before the computer sleeps. video players and browsers keep it away while they play. settings → lock & idle.
 - **night light**: warmer colours at night, from sunset or at the hours you choose. settings → display, or the quick settings.
 - a **pop-up** for the volume and brightness keys.
 

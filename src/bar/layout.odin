@@ -575,7 +575,7 @@ is_interactive :: proc(b: ^Bar, w: ^Widget) -> bool {
 	case .Volume:              return b.vol.backend != .None || command_for(b, "volume") != ""
 	case .Brightness:          return true
 	case .Network, .Bluetooth: return true
-	case .Notifications, .Clipboard: return b.click_handler != nil || command_for(b, WIDGET_IDS[w.kind]) != ""
+	case .Notifications, .Clipboard, .Session: return b.click_handler != nil || command_for(b, WIDGET_IDS[w.kind]) != "" // .Session: milk's session menu (milk/session.odin)
 	case .Settings:            return true
 	case .Media:               return b.media.status != .Idle || command_for(b, "media") != ""
 	}

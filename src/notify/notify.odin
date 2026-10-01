@@ -81,6 +81,7 @@ Notifier :: struct {
 	history:    [dynamic]^Notification, // oldest first
 	dnd:        bool, // do not disturb (runtime; follows the config when it changes)
 	cfg_dnd:    bool, // the configuration value last seen
+	paused:     bool, // the screen is locked: no popups (history still collected)
 	started:    bool,
 	theme:      Theme,
 	fonts:      Fonts,
@@ -196,6 +197,15 @@ handle_fd :: proc(n: ^Notifier, fd: i32) {
 	context.allocator = n.allocator
 	bus_pump(n, true)
 	tx.flush(n.c)
+}
+
+// No popups while the screen is locked (they would show what the lock screen
+// hides until it raises itself again); notifications still reach the history.
+set_paused :: proc(n: ^Notifier, paused: bool) {
+	if n == nil || n.paused == paused { return }
+	context.allocator = n.allocator
+	n.paused = paused
+	if paused { popups_hide_all(n) }
 }
 
 // The configuration was reloaded (`cfg` replaces the previous one).
@@ -367,7 +377,7 @@ notification_post :: proc(n: ^Notifier, req: ^Notify_Request) -> u32 {
 	log.debugf("Notifications: #%d from %q: %q", id, notif.app_name, notif.summary)
 	history_trim(n)
 
-	if !n.panel.open && !n.dnd && n.started {
+	if !n.panel.open && !n.dnd && !n.paused && n.started {
 		popup_show(n, notif)
 	} else {
 		if n.panel.open { panel_refresh(n) }

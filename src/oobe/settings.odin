@@ -23,7 +23,7 @@ import tx "../tx"
 @(private) NOTICE_TIME :: 2.2
 
 @(private)
-Section :: enum { Appearance, Wallpapers, Bar, Windows, Desktop, Effects, Display, Shortcuts, Keyboard, Notifications, Clipboard, Areas, About }
+Section :: enum { Appearance, Wallpapers, Bar, Windows, Desktop, Effects, Display, Shortcuts, Keyboard, Notifications, Clipboard, Lock, Areas, About }
 
 // What a change touched (decides which keys are written and how soon).
 @(private)
@@ -47,6 +47,7 @@ Control :: enum {
 	Di_Enabled, Di_Shortcut_Mode, Di_Size, Di_Single, Di_Thumbs, Di_Hidden, Di_Sort, Di_New_Icons,
 	// display.odin
 	Nl_Enabled, Nl_Mode, Nl_Transition, Nl_From, Nl_To, Nl_Lat, Nl_Lon, Osd_Position,
+	Lock_Enabled, Lock_After, Dim_After, Screen_Off_After, Suspend_After, Lock_On_Suspend, Inhibit_Fullscreen,
 }
 
 @(private) ANIM_SCALES :: [4]f64{0, 0.5, 1, 1.5}
@@ -96,6 +97,14 @@ Settings :: struct {
 	di_single:      bool,
 	sc_mode:        int, // SHORTCUT_MODE_NAMES
 	disp:           Display_Settings, // Tela: night light and the volume/brightness pop-up (display.odin)
+	// Bloqueio e inatividade (lock.odin).
+	lock_enabled:       bool,
+	lock_on_suspend:    bool,
+	inhibit_fullscreen: bool,
+	dim_after:          int, // seconds, 0 = never
+	lock_after:         int,
+	screen_off_after:   int,
+	suspend_after:      int,
 	fx_poll:        f64,
 	fx_children:    [dynamic]posix.pid_t, // lactase settings apps not reaped yet
 	names:          [dynamic][dynamic]u8,
@@ -182,6 +191,7 @@ settings_load_values :: proc(w: ^Wizard) {
 	s.fx_enabled = cfg.compositor.enabled
 	windows_load_values(w)
 	display_load_values(w)
+	lock_load_values(w)
 	for n in w.areas {
 		name: [dynamic]u8
 		if ws, ok := cfg.workspaces[n]; ok { append(&name, ..transmute([]u8)ws.name) }
@@ -317,6 +327,8 @@ section_info :: proc(w: ^Wizard, s: Section) -> (icon: Icon, title, desc: string
 		return .Bell, tr(w, "Notificações", "Notifications"), tr(w, "Avisos que aparecem no canto da tela.", "Pop-ups shown in a corner of the screen.")
 	case .Clipboard:
 		return .Clipboard, tr(w, "Área de transferência", "Clipboard"), tr(w, "Histórico de textos e imagens copiados.", "History of copied text and images.")
+	case .Lock:
+		return .Lock, tr(w, "Bloqueio e inatividade", "Lock & idle"), tr(w, "Tela de bloqueio e o que acontece quando o computador fica sem uso.", "The lock screen and what happens when the computer is not in use.")
 	case .Areas:
 		return .Layout_Grid, tr(w, "Áreas", "Areas"), tr(w, "Nomes das áreas de trabalho, mostrados no aviso de área.", "Workspace names, shown by the area toast.")
 	case .About:
@@ -385,6 +397,9 @@ draw_settings :: proc(w: ^Wizard, cv: ^tx.Canvas) {
 	case .Clipboard:
 		ry := c.y
 		rows_clipboard(w, cv, c, &ry)
+	case .Lock:
+		ry := c.y
+		rows_lock(w, cv, c, &ry)
 	case .Areas:
 		ry := c.y
 		rows_areas(w, cv, c, &ry)
@@ -398,7 +413,8 @@ draw_settings :: proc(w: ^Wizard, cv: ^tx.Canvas) {
 	}
 
 
-	// Sidebar.
+	// Sidebar: the entries shrink a little when they would reach the version line.
+	step := clamp((w.screen.h - 80 - 52) / i32(len(Section)), 30, 44)
 	x: i32 = 22
 	if w.f_icon_small != nil {
 		tx.canvas_fill_circle(cv, f32(x + 15), 39, 15, th.accent)
@@ -409,7 +425,7 @@ draw_settings :: proc(w: ^Wizard, cv: ^tx.Canvas) {
 	y: i32 = 80
 	for sec in Section {
 		ic, title, _ := section_info(w, sec)
-		r := tx.Rect{12, y, SIDEBAR_W - 24, 40}
+		r := tx.Rect{12, y, SIDEBAR_W - 24, step - 4}
 		sel := sec == s.section
 		hot := hovered(w, .Section, int(sec))
 		if sel {
@@ -421,7 +437,7 @@ draw_settings :: proc(w: ^Wizard, cv: ^tx.Canvas) {
 		icon(w, w.f_icon_small, {r.x + 12, r.y, 22, r.h}, ic, sel ? th.accent_fg : mix(th.fg, th.muted, 0.35))
 		text(w, w.f_body, r.x + 46, r.y, r.h, ellipsize(w, w.f_body, title, r.w - 54), fg)
 		add_hit(w, r, .Section, int(sec))
-		y += 44
+		y += step
 	}
 	text(w, w.f_small, 24, w.screen.h - 40, 20, fmt.tprintf("milk %s", app_version), th.muted)
 
@@ -696,6 +712,8 @@ settings_action :: proc(w: ^Wizard, action: Action, arg: int) {
 		show_notice(w, tr(w, "O assistente abrirá no próximo início", "The wizard will open next time"))
 	case .Fx_Open:
 		open_lactase_settings(w)
+	case .Lock_Now:
+		lock_now(w) // lock.odin
 	case .Open_Config:
 		desc := os.Process_Desc{command = {"xdg-open", w.config_path}}
 		if p, err := os.process_start(desc); err == nil {
@@ -745,7 +763,7 @@ step_control :: proc(w: ^Wizard, ctrl: Control, dir: int) {
 		s.clip_max = clamp(s.clip_max + 10 * dir, 10, 500)
 		set_edit(w, "clipboard.maxItems", json.Integer(s.clip_max))
 	case:
-		if !windows_step(w, ctrl, dir) && !display_step(w, ctrl, dir) { return }
+		if !windows_step(w, ctrl, dir) && !display_step(w, ctrl, dir) && !lock_step(w, ctrl, dir) { return }
 	}
 	settings_changed(w, .Values)
 }
@@ -773,7 +791,7 @@ toggle_control :: proc(w: ^Wizard, ctrl: Control) {
 		s.fx_enabled = !s.fx_enabled
 		set_edit(w, "compositor.enabled", json.Boolean(s.fx_enabled))
 	case:
-		if !windows_toggle(w, ctrl) && !display_toggle(w, ctrl) { return }
+		if !windows_toggle(w, ctrl) && !display_toggle(w, ctrl) && !lock_toggle(w, ctrl) { return }
 	}
 	settings_changed(w, .Values)
 }

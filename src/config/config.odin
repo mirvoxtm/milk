@@ -175,6 +175,23 @@ Compositor_Options :: struct {
 	enabled: bool, // run lactase with milk when it is installed (next to milk or on $PATH)
 }
 
+// Lock screen and idle handling (package lock): what happens after a while
+// without keyboard or mouse input. Every delay is in seconds of inactivity;
+// 0 = never. Inhibitors (org.freedesktop.ScreenSaver: video players and
+// browsers) and, optionally, a fullscreen focused window hold every stage off.
+Idle_Options :: struct {
+	dim_after:          int,  // the screen dims (gamma) before it locks or turns off
+	lock_after:         int,  // the lock screen starts (when lock.enabled)
+	screen_off_after:   int,  // the monitors go to sleep (DPMS)
+	suspend_after:      int,  // the computer suspends through logind
+	inhibit_fullscreen: bool, // a fullscreen focused window counts as activity
+}
+
+Lock_Options :: struct {
+	enabled:    bool, // lock automatically after idle.lockAfter (the lock action, `milk lock` and logind's Lock always work)
+	on_suspend: bool, // lock before the computer suspends or hibernates
+}
+
 // Keyboard (applied with setxkbmap when milk starts; "" keeps the X server's setting).
 Keyboard_Options :: struct {
 	layout:  string, // xkb layouts, comma separated: "br", "us,br"
@@ -336,6 +353,7 @@ WM_ACTIONS :: []string{
 	"switch-windows", "switch-windows-reverse", "show-desktop", "focus-next", "focus-prev", "toggle-floating",
 	"view-next", "view-prev", "view-last", "send-next", "send-prev", "terminal", "launcher", "files",
 	"screenshot", "clipboard", "notifications", "reload", "quit",
+	"lock", // the lock screen (package lock)
 	"desktop-new-folder", "desktop-arrange", "desktop-open-folder",
 	// Handled by the main loop (night light; volume/brightness with the on-screen pop-up).
 	"night-light", "volume-up", "volume-down", "mute", "brightness-up", "brightness-down",
@@ -462,6 +480,8 @@ Config :: struct {
 	compositor:    Compositor_Options,
 	night_light:   Night_Light_Options, // nightLight (nightlight.odin)
 	osd:           OSD_Options,         // osd: the volume/brightness pop-up
+	idle:          Idle_Options, // lock screen and idle (parse_idle_lock)
+	lock:          Lock_Options,
 	allocator:  runtime_allocator,
 }
 
@@ -538,6 +558,17 @@ default_title_bar :: proc() -> Title_Bar_Options {
 default_desktop_icons :: proc() -> Desktop_Icon_Options {
 	return {enabled = false, folder = "", show_hidden = false, sort = "name", thumbnails = true, new_icons = "every-area"}
 }
+
+// Dim half a minute before locking at 10 minutes, monitors off at 15, never suspend.
+default_idle :: proc() -> Idle_Options {
+	return {dim_after = 570, lock_after = 600, screen_off_after = 900, suspend_after = 0, inhibit_fullscreen = false}
+}
+
+default_lock :: proc() -> Lock_Options {
+	return {enabled = true, on_suspend = true}
+}
+
+IDLE_MAX_SECONDS :: 24 * 3600
 
 // ---------------------------------------------------------------------------
 // Loading
@@ -1074,6 +1105,28 @@ parse_extras :: proc(l: ^Loader, root: json.Object, cfg: ^Config) -> bool {
 	cfg.keyboard.variant = get_string(l, kb, "variant", "keyboard", "", true) or_return
 	cfg.keyboard.model = get_string(l, kb, "model", "keyboard", "", true) or_return
 	cfg.keyboard.options = get_string(l, kb, "options", "keyboard", "", true) or_return
+	parse_idle_lock(l, root, cfg) or_return
+	return true
+}
+
+// "idle": {"dimAfter", "lockAfter", "screenOffAfter", "suspendAfter", "inhibitFullscreen"}
+// and "lock": {"enabled", "onSuspend"} (package lock).
+@(private)
+parse_idle_lock :: proc(l: ^Loader, root: json.Object, cfg: ^Config) -> bool {
+	di := default_idle()
+	id := get_object(l, root, "idle", "milk.json") or_return
+	reject_unknown(l, id, {"dimAfter", "lockAfter", "screenOffAfter", "suspendAfter", "inhibitFullscreen"}, "idle") or_return
+	cfg.idle.dim_after = int(get_number(l, id, "dimAfter", "idle", f64(di.dim_after), 0, IDLE_MAX_SECONDS) or_return)
+	cfg.idle.lock_after = int(get_number(l, id, "lockAfter", "idle", f64(di.lock_after), 0, IDLE_MAX_SECONDS) or_return)
+	cfg.idle.screen_off_after = int(get_number(l, id, "screenOffAfter", "idle", f64(di.screen_off_after), 0, IDLE_MAX_SECONDS) or_return)
+	cfg.idle.suspend_after = int(get_number(l, id, "suspendAfter", "idle", f64(di.suspend_after), 0, IDLE_MAX_SECONDS) or_return)
+	cfg.idle.inhibit_fullscreen = get_bool(l, id, "inhibitFullscreen", "idle", di.inhibit_fullscreen) or_return
+
+	dl := default_lock()
+	lo := get_object(l, root, "lock", "milk.json") or_return
+	reject_unknown(l, lo, {"enabled", "onSuspend"}, "lock") or_return
+	cfg.lock.enabled = get_bool(l, lo, "enabled", "lock", dl.enabled) or_return
+	cfg.lock.on_suspend = get_bool(l, lo, "onSuspend", "lock", dl.on_suspend) or_return
 	return true
 }
 

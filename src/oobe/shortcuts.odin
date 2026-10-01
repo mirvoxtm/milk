@@ -73,6 +73,7 @@ ACTION_CHOICES := []Action_Choice{
 	{"brightness-down", "Diminuir o brilho", "Brightness down"},
 	{"settings", "Configurações do milk", "milk settings"},
 	{"reload", "Recarregar milk.json", "Reload milk.json"},
+	{"lock", "Bloquear a tela", "Lock the screen"},
 }
 
 @(private)
@@ -161,6 +162,7 @@ BUILTINS := []Builtin{
 	{"mod+shift+s", "Capturar uma região da tela", "Screenshot of a region", 0},
 	{"mod+shift+r", "Recarregar milk.json", "Reload milk.json", 0},
 	{"mod+shift+q", "Sair do milk", "Quit milk", 0},
+	{"mod+shift+l XF86ScreenSaver", "Bloquear a tela", "Lock the screen", 0},
 	{"XF86AudioMute XF86AudioLowerVolume XF86AudioRaiseVolume", "Mudo / volume − / volume +", "Mute / volume − / volume +", 0},
 	{"XF86MonBrightnessDown XF86MonBrightnessUp", "Brilho − / +", "Brightness − / +", 0},
 }

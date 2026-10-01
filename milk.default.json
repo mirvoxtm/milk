@@ -64,6 +64,13 @@
       "warning": "#B5473A"
     }
   },
+  "idle": {
+    "dimAfter": 570,
+    "inhibitFullscreen": false,
+    "lockAfter": 600,
+    "screenOffAfter": 900,
+    "suspendAfter": 0
+  },
   "linux": {
     "desktopIcons": {
       "enabled": false,
@@ -96,6 +103,10 @@
       "singleClick": false
     },
     "wallpaperMode": "fill"
+  },
+  "lock": {
+    "enabled": true,
+    "onSuspend": true
   },
   "nightLight": {
     "enabled": false,

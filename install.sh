@@ -472,6 +472,7 @@ if [ "$uninstall" -eq 1 ]; then
     if [ -e /usr/share/xsessions/milk.desktop ]; then
         sudo env XSESSIONS_DIR=/usr/share/xsessions "$MILK/contrib/install-sddm-session.sh" --uninstall || true
     fi
+    if grep -q 'installed by milk/install.sh' /etc/pam.d/milk 2>/dev/null; then sudo rm -f /etc/pam.d/milk; fi
     rm -f "${BIN_DIR:?}/milk" "${BIN_DIR:?}/spoil" "${BIN_DIR:?}/lactase"
     if our_link odin; then rm -f "${BIN_DIR:?}/odin"; fi
     if our_link matugen; then rm -f "${BIN_DIR:?}/matugen"; fi
@@ -534,7 +535,7 @@ odin_pkg=""; matugen_pkg=""; services=(NetworkManager bluetooth)
 case "$distro" in
     arch)
         required=(
-            base-devel git clang curl                  # build
+            base-devel git clang curl pam              # build (pam: the lock screen)
             xorg-server xorg-xrandr xorg-setxkbmap xorg-xprop xorg-xinit
             libx11 libxft libxrandr libxfixes libxext fontconfig freetype2 zlib dbus
             feh librsvg imagemagick                    # wallpapers, SVG icons, thumbnails
@@ -549,7 +550,7 @@ case "$distro" in
         odin_pkg=odin; matugen_pkg=matugen ;;
     debian)
         required=(
-            build-essential git clang curl ca-certificates
+            build-essential git clang curl ca-certificates libpam0g-dev
             xserver-xorg x11-xserver-utils x11-xkb-utils x11-utils xinit
             libx11-dev libxft-dev libxrandr-dev libxfixes-dev libxext-dev "libfontconfig-dev|libfontconfig1-dev"
             "libfreetype-dev|libfreetype6-dev" zlib1g-dev libdbus-1-dev
@@ -564,7 +565,7 @@ case "$distro" in
         optional=(alacritty rofi brightnessctl playerctl maim xclip flameshot "?unrar|unrar-free" network-manager-gnome) ;;
     fedora)
         required=(
-            gcc git clang curl
+            gcc git clang curl pam-devel
             xorg-x11-server-Xorg xrandr setxkbmap xprop "xorg-x11-xinit|xinit"
             libX11-devel libXft-devel libXrandr-devel libXfixes-devel libXext-devel fontconfig-devel freetype-devel
             "zlib-ng-compat-devel|zlib-devel" dbus-devel
@@ -581,7 +582,7 @@ case "$distro" in
         matugen_pkg=matugen ;;
     opensuse)
         required=(
-            gcc make git clang curl gawk
+            gcc make git clang curl gawk pam-devel
             xorg-x11-server xrandr setxkbmap xprop xinit
             libX11-devel libXft-devel libXrandr-devel libXfixes-devel libXext-devel fontconfig-devel freetype2-devel
             zlib-devel dbus-1-devel
@@ -597,7 +598,7 @@ case "$distro" in
         optional=(alacritty rofi brightnessctl playerctl maim xclip flameshot "?unrar" NetworkManager-applet) ;;
     void)
         required=(
-            base-devel git clang curl
+            base-devel git clang curl pam-devel
             xorg-minimal xrandr setxkbmap xprop xinit
             libX11-devel libXft-devel libXrandr-devel libXfixes-devel libXext-devel fontconfig-devel freetype-devel
             zlib-devel dbus-devel
@@ -951,6 +952,24 @@ sudo env XSESSIONS_DIR="$xsessions_dir" "$MILK/contrib/install-sddm-session.sh" 
 # A single entry: SDDM would list a copy from each folder.
 if [ "$xsessions_dir" != /usr/local/share/xsessions ] && [ -e /usr/local/share/xsessions/milk.desktop ]; then
     sudo rm -f /usr/local/share/xsessions/milk.desktop
+fi
+# The lock screen checks passwords through PAM service "milk": the system's own
+# authentication stack, whichever this distribution has (openSUSE keeps it in /usr/lib/pam.d).
+if [ -f /etc/pam.d/milk ]; then
+    ok "$(t "Senha da tela de bloqueio: /etc/pam.d/milk" "Lock screen password check: /etc/pam.d/milk" "Contraseña de la pantalla de bloqueo: /etc/pam.d/milk")"
+else
+    pam_base=""
+    for service in system-auth common-auth login; do
+        for dir in /etc/pam.d /usr/lib/pam.d /usr/etc/pam.d; do
+            if [ -f "$dir/$service" ]; then pam_base=$service; break 2; fi
+        done
+    done
+    if [ -n "$pam_base" ]; then
+        printf '#%%PAM-1.0\n# milk lock screen (installed by milk/install.sh)\nauth include %s\n' "$pam_base" | sudo tee /etc/pam.d/milk >/dev/null
+        ok "$(t "Senha da tela de bloqueio: /etc/pam.d/milk ($pam_base)" "Lock screen password check: /etc/pam.d/milk ($pam_base)" "Contraseña de la pantalla de bloqueo: /etc/pam.d/milk ($pam_base)")"
+    else
+        warn "$(t "nenhum serviço PAM conhecido; a tela de bloqueio usa o padrão do sistema" "no known PAM service; the lock screen uses the system default" "ningún servicio PAM conocido; la pantalla de bloqueo usa el predeterminado")"
+    fi
 fi
 
 printf '\n%s✓ %s%s\n' "$G" "$(t "O milk está instalado." "milk is installed." "milk está instalado.")" "$N"
