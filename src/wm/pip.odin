@@ -260,6 +260,10 @@ moveresize :: proc(m: ^Manager, c: ^Client, dir: int, px, py: i32, button: u32) 
 	// togglefloating acts on the selection: only the selected client may leave the tiling.
 	can_float := c == m.selmon.sel
 	zone := Snap.None // snap layout under the pointer (floating mode)
+	// milk: a move released on an area dot of the bar sends the window there (drop.odin).
+	start := drag_start(c)
+	droppable := dir == MR_MOVE && can_drop(m, c)
+	released := false
 	lasttime: xlib.Time
 	ev: xlib.XEvent
 	loop: for {
@@ -272,7 +276,10 @@ moveresize :: proc(m: ^Manager, c: ^Client, dir: int, px, py: i32, button: u32) 
 		case .ClientMessage:
 			if ev.xclient.data.l[2] == MR_CANCEL { break loop }
 		case .ButtonRelease:
-			if button == 0 || u32(ev.xbutton.button) == button { break loop }
+			if button == 0 || u32(ev.xbutton.button) == button {
+				released = true
+				break loop
+			}
 		case .MotionNotify:
 			if ev.xmotion.window != m.root { continue }
 			// The button went up without a release reaching us.
@@ -299,7 +306,12 @@ moveresize :: proc(m: ^Manager, c: ^Client, dir: int, px, py: i32, button: u32) 
 					togglefloating(m, nil)
 				}
 				if !arranged || c.isfloating { resize(m, c, nx, ny, c.w, c.h, true) }
-				if m.settings.floating && m.settings.snap_layouts && c.kind == .Normal && !c.isfixed {
+				// An area dot under the pointer wins over the snap layouts.
+				over := droppable ? drop_hover(m, ev.xmotion.x_root, ev.xmotion.y_root) : 0
+				if over > 0 {
+					zone = .None
+					snap_preview(m, .None, nil)
+				} else if m.settings.floating && m.settings.snap_layouts && c.kind == .Normal && !c.isfixed {
 					zone = snap_zone(m, ev.xmotion.x_root, ev.xmotion.y_root)
 					snap_preview(m, zone, recttomon(m, ev.xmotion.x_root, ev.xmotion.y_root, 1, 1))
 				}
@@ -338,6 +350,14 @@ moveresize :: proc(m: ^Manager, c: ^Client, dir: int, px, py: i32, button: u32) 
 	xlib.UngrabPointer(m.dpy, xlib.CurrentTime)
 	snap_preview(m, .None, nil)
 	discard_enter_events(m)
+	if droppable {
+		// Cancelled moves (the client's request, a release we never saw) drop nothing.
+		x, y := released ? ev.xbutton.x_root : -1, released ? ev.xbutton.y_root : -1
+		if area := drop_end(m, x, y); area > 0 {
+			drop_on_area(m, c, area, start)
+			return
+		}
+	}
 	if mon := recttomon(m, c.x, c.y, c.w, c.h); mon != m.selmon {
 		sendmon(m, c, mon)
 		m.selmon = mon

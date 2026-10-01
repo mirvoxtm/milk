@@ -527,7 +527,8 @@ workspace_items :: proc(b: ^Bar, x0: i32) -> []Workspace_Item {
 	for i in 0 ..< b.ws.count {
 		occupied := i < len(b.ws.occupied) && b.ws.occupied[i]
 		active := i == b.ws.current
-		if !active && !occupied && !b.cfg.bar.show_empty_workspaces { continue }
+		// While something is dragged every area is a drop target (drop.odin).
+		if !active && !occupied && !b.cfg.bar.show_empty_workspaces && !b.dropping { continue }
 		kind: Dot_Kind = active ? .Active : (occupied ? .Occupied : .Empty)
 		w := active ? m.pill_w : m.slot
 		if len(items) > 0 { x += m.gap }
@@ -553,13 +554,16 @@ draw_workspaces :: proc(b: ^Bar, cv: ^tx.Canvas, w: ^Widget) {
 	cy := f32(oy + h / 2) - 0.5 // odd-sized dots land on whole pixels
 	for it in workspace_items(b, w.x + w.pad) {
 		cx := f32(ox + it.x) + f32(it.w) / 2
+		target := it.index + 1 == b.drop_target
+		if target { draw_drop_target(b, cv, it, cx) }
 		switch it.kind {
 		case .Active:
 			tx.canvas_fill_rounded_rect(cv, tx.Rect{ox + it.x, oy + h / 2 - m.pill_h / 2, it.w, m.pill_h}, f32(m.pill_h) / 2, b.theme.accent)
 		case .Occupied:
 			tx.canvas_fill_circle(cv, cx, cy, m.occupied_r, b.theme.accent)
 		case .Empty:
-			tx.canvas_fill_circle(cv, cx, cy, m.empty_r, b.theme.dot_empty)
+			// A drop target lights up: an empty area's dot as an occupied one.
+			if target { tx.canvas_fill_circle(cv, cx, cy, m.occupied_r, b.theme.accent) } else { tx.canvas_fill_circle(cv, cx, cy, m.empty_r, b.theme.dot_empty) }
 		}
 	}
 }

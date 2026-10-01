@@ -470,6 +470,19 @@ bar_click :: proc(data: rawptr, id: string, anchor: tx.Rect) -> bool {
 	return false
 }
 
+// Desktop icons and windows dragged onto the bar's area dots go to that area.
+// The dragging component holds the pointer grab (the bar sees no motion), so
+// it reports the pointer here: the dot under it is highlighted and its area
+// (1-based, 0 = none) returned; `ending` clears the highlight (the drop, or
+// x = y = -1 for a cancelled drag). No bar: nothing is a drop target.
+drop_probe :: proc(data: rawptr, x, y: i32, ending: bool) -> int {
+	r := (^Runner)(data)
+	if r.bar == nil { return 0 }
+	n := bar.area_at(r.bar, x, y)
+	bar.set_drop_target(r.bar, ending ? 0 : n, !ending)
+	return n
+}
+
 create_bar :: proc(r: ^Runner) {
 	b, ok := bar.create(r.c, r.cfg)
 	if !ok {
@@ -533,6 +546,7 @@ run :: proc(opts: ^Options, cfg: ^config.Config) -> int {
 	if cfg.wm.enabled && !opts.no_wm {
 		if m, wok := wm.create(c, cfg); wok {
 			r.manager = m
+			wm.set_drop_probe(m, drop_probe, &r) // windows dropped on the area dots
 			monitor, top, bottom := bar_reservation(cfg, opts)
 			wm.set_reserved(m, monitor, top, bottom)
 			wm.start(m)
@@ -552,9 +566,11 @@ run :: proc(opts: ^Options, cfg: ^config.Config) -> int {
 	}
 	r.daemon = daemon
 	defer desktop.destroy(daemon)
+	desktop.set_drop_probe(daemon, drop_probe, &r) // icons dropped on the area dots
 
 	if cfg.bar.enabled && !opts.no_bar { create_bar(&r) }
-	defer if r.bar != nil { bar.destroy(r.bar) }
+	// r.bar = nil: the desktop, destroyed after it, may still end a drag (drop_probe).
+	defer if r.bar != nil { bar.destroy(r.bar); r.bar = nil }
 
 	if cfg.notifications.enabled {
 		if n, nok := notify.create(c, cfg); nok { r.notes = n }

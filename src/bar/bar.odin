@@ -89,6 +89,9 @@ Bar :: struct {
 	reload_flag:     bool,   // the popup changed milk.json
 	hover:           int, // widget under the pointer, -1 = none
 	dirty:           bool,
+	// Drops on the area dots (drop.odin).
+	drop_target:     int,  // area (1-based) whose dot is highlighted, 0 = none
+	dropping:        bool, // icons or a window are being dragged: every area's dot shows
 
 	// State
 	ws:              Workspaces_State,

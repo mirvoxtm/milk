@@ -100,6 +100,9 @@ Manager :: struct {
 	last_click_button: u32,
 	last_click_time:   xlib.Time,
 	last_click_x, last_click_y: i32,
+	// Windows dropped on the bar's area dots (drop.odin; set by main.odin).
+	drop_probe:        Drop_Probe,
+	drop_data:         rawptr,
 }
 
 // The compositor selection as the window manager follows it (compositor.odin).

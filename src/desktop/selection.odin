@@ -60,6 +60,7 @@ Pointer :: struct {
 	moving:     [dynamic]int,   // the cells being moved
 	origin:     [dynamic]Place, // their places when the drag started
 	offset:     [2]int,         // grid offset applied so far
+	drop_area:  int,            // the bar's area dot under the pointer (drop.odin), 0 = none
 	// Band
 	band:       tx.Rect,        // screen coordinates; w = 0 until it has a size
 	base:       [dynamic]bool,  // selection before the band (kept with Ctrl)
@@ -90,6 +91,7 @@ pointer_destroy :: proc(d: ^Daemon) {
 pointer_cancel :: proc(d: ^Daemon) {
 	p := &d.layer.pointer
 	if p.mode == .Band { band_end(d) }
+	if p.mode == .Dragging { drop_end(d, -1, -1) } // no drop: just clear the bar's highlight
 	p.mode = .Idle
 	p.moved = false
 	clear(&p.moving)
@@ -243,6 +245,12 @@ layer_on_release :: proc(d: ^Daemon, be: ^xlib.XButtonEvent) {
 			open_item(d, &l.items[l.cells[p.cell].entry])
 		}
 	case .Dragging:
+		// Released on one of the bar's area dots: the icons go to that area
+		// (Ctrl: are shown there too) and back to their places.
+		if area := drop_end(d, p.pos.x, p.pos.y); area > 0 {
+			drop_on_area(d, area, .ControlMask in be.state)
+			break
+		}
 		drag_update(d)
 		for i in p.moving {
 			cell := &l.cells[i]
@@ -268,8 +276,10 @@ pointer_tick :: proc(d: ^Daemon) {
 	case .Pressed:
 		if abs(p.pos.x - p.press.x) <= DRAG_THRESHOLD && abs(p.pos.y - p.press.y) <= DRAG_THRESHOLD { return }
 		drag_begin(d)
+		drop_hover(d)
 		drag_update(d)
 	case .Dragging:
+		drop_hover(d)
 		drag_update(d)
 	case .Band:
 		band_update(d)
@@ -302,6 +312,7 @@ drag_update :: proc(d: ^Daemon) {
 	l := &d.layer
 	p := &l.pointer
 	if p.mode != .Dragging { return }
+	if p.drop_area > 0 { return } // over an area dot of the bar: the icons wait where they are
 	at := grid_cell_at(l, p.pos.x, p.pos.y)
 	start := grid_cell_at(l, p.press.x, p.press.y)
 	offset := [2]int{at.x - start.x, at.y - start.y}
@@ -316,6 +327,16 @@ drag_update :: proc(d: ^Daemon) {
 		q := o + offset
 		if !grid_contains(g, q) || taken[q.x * g.rows + q.y] { return }
 	}
+	drag_place(d, offset)
+}
+
+// Put the dragged cells at their places of the drag start moved by `offset`
+// (a free spot: checked by the caller; {0, 0} = back where they were).
+@(private)
+drag_place :: proc(d: ^Daemon, offset: [2]int) {
+	l := &d.layer
+	p := &l.pointer
+	if offset == p.offset { return }
 	p.offset = offset
 	source, has_pixmap := wallpaper_drawable(d)
 	if !has_pixmap {

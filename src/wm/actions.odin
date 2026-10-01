@@ -241,6 +241,8 @@ movemouse :: proc(m: ^Manager, arg: ^Arg) {
 	if c.isfullscreen { return } // no support moving fullscreen windows by mouse
 	restack(m, m.selmon)
 	ocx, ocy := c.x, c.y
+	start := drag_start(c) // milk: dropped on an area dot of the bar, it goes back to this (drop.odin)
+	droppable := can_drop(m, c)
 	if xlib.GrabPointer(m.dpy, m.root, false, MOUSEMASK, .GrabModeAsync, .GrabModeAsync,
 	                    0, m.cursor[.Move], xlib.CurrentTime) != GRAB_SUCCESS { return }
 	x, y, ok := getrootptr(m)
@@ -279,10 +281,17 @@ movemouse :: proc(m: ^Manager, arg: ^Arg) {
 				togglefloating(m, nil)
 			}
 			if !has_arrange(cur_layout(sm)) || c.isfloating { resize(m, c, nx, ny, c.w, c.h, true) }
+			if droppable { drop_hover(m, ev.xmotion.x_root, ev.xmotion.y_root) }
 		}
 		if ev.type == .ButtonRelease { break }
 	}
 	xlib.UngrabPointer(m.dpy, xlib.CurrentTime)
+	if droppable {
+		if area := drop_end(m, ev.xbutton.x_root, ev.xbutton.y_root); area > 0 {
+			drop_on_area(m, c, area, start)
+			return
+		}
+	}
 	if mon := recttomon(m, c.x, c.y, c.w, c.h); mon != m.selmon {
 		sendmon(m, c, mon)
 		m.selmon = mon

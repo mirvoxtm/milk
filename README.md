@@ -44,7 +44,7 @@ with matugen, the color scheme can even be picked up by your wallpaper!
 
 ## your areas, your desktop
 
-every area keeps its own wallpaper, colours and icons. right-click a desktop icon → **show on** to keep it to some areas (steam on area 4 only).
+every area keeps its own wallpaper, colours and icons. right-click a desktop icon → **show on** to keep it to some areas (steam on area 4 only), or just drag it - or any window - onto an area's dot in the bar to send it there.
 
 ## everything a session needs
 

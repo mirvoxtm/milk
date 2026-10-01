@@ -63,6 +63,9 @@ Daemon :: struct {
 	area_check_at:    f64, // a bar/dock appeared, moved or vanished
 	bg_refresh_at:    f64, // the wallpaper pixmap was replaced by someone else
 	quiet:            bool, // re-applying after a reload: no indicator
+	// Icons dragged onto the bar's area dots (drop.odin; set by main.odin).
+	drop_probe:       Drop_Probe,
+	drop_data:        rawptr,
 }
 
 @(private)
