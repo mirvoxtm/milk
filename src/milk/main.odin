@@ -418,6 +418,7 @@ Runner :: struct {
 	idle:             ^lock.Manager,       // lock screen and idle stages (session.odin)
 	session:          Session_Menu,        // the bar's power menu (session.odin)
 	lactase_children: [dynamic]posix.pid_t, // lactase launchers not reaped yet
+	apps:             App_Theme,           // GTK/Qt apps in milk's colours (apptheme.odin)
 }
 
 // The strip the bar occupies on its monitor, which the window manager must keep free.
@@ -536,6 +537,8 @@ run :: proc(opts: ^Options, cfg: ^config.Config) -> int {
 
 	write_rofi_theme(cfg)
 	r := Runner{opts = opts, cfg = cfg, c = c}
+	apptheme_apply(&r) // GTK and Qt apps follow the theme (apptheme.odin)
+	defer apptheme_stop(&r)
 	mask := desktop.ROOT_EVENT_MASK
 	if cfg.bar.enabled && !opts.no_bar { mask |= bar.ROOT_EVENT_MASK }
 	if cfg.wm.enabled && !opts.no_wm { mask |= wm.ROOT_EVENT_MASK }
@@ -618,6 +621,7 @@ loop :: proc(r: ^Runner) {
 			// Dead keys typed into milk's text fields (the Wi-Fi password)
 			// are consumed by the input method and come back composed.
 			if tx.input_filter(&ev) { continue }
+			if apptheme_event(r, &ev) { continue } // the XSETTINGS window
 			if session_event(r, &ev) { continue }
 			if r.manager != nil { wm.handle_event(r.manager, &ev) }
 			desktop.handle_event(r.daemon, &ev)
@@ -659,6 +663,7 @@ loop :: proc(r: ^Runner) {
 		if desktop.theme_changed(r.daemon) { reload_theme(r) }
 		now := tx.now()
 		compositor_reap(r)
+		apptheme_reap(r)
 		if r.manager != nil { wm.tick(r.manager, now) }
 		desktop.tick(r.daemon, now)
 		if r.bar != nil { bar.tick(r.bar, now) }
@@ -766,6 +771,7 @@ reload :: proc(r: ^Runner) {
 	lock.reload(r.idle, cfg)
 	apply_keyboard(cfg)
 	write_rofi_theme(cfg)
+	apptheme_apply(r)
 	oobe.refresh_wallpaper_theme_files(cfg)
 	compositor_sync(r)
 	config.destroy(old)
@@ -801,6 +807,7 @@ reload_theme :: proc(r: ^Runner) {
 	if r.clips != nil { clip.reload(r.clips, cfg) }
 	lock.reload(r.idle, cfg)
 	write_rofi_theme(cfg)
+	apptheme_apply(r)
 	oobe.refresh_wallpaper_theme_files(cfg)
 	config.destroy(old)
 	log.info("Wallpaper colours applied")

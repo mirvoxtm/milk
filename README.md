@@ -52,6 +52,7 @@ every area keeps its own wallpaper, colours and icons. right-click a desktop ico
 - a **lock screen**: super+shift+l, after a while without use (the screen dims first) and before the computer sleeps. video players and browsers keep it away while they play. settings → lock & idle.
 - **night light**: warmer colours at night, from sunset or at the hours you choose. settings → display, or the quick settings.
 - a **pop-up** for the volume and brightness keys.
+- **gtk and qt apps** take milk's colours too, and follow them live (with adw-gtk3 and qt5ct/qt6ct, which the installer adds).
 
 ## updating
 updating from a version that kept `milk.json` inside the clone: if `git pull` refuses because of it, run `git checkout -- milk.json && git pull`. 

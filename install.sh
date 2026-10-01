@@ -44,6 +44,9 @@ ODIN_BASE_URL="https://github.com/odin-lang/Odin/releases/download/$ODIN_RELEASE
 # matugen's release binary, for distributions that do not package it (x86_64 only).
 MATUGEN_VERSION="4.2.0"
 MATUGEN_URL="https://github.com/InioX/matugen/releases/download/v$MATUGEN_VERSION/matugen-$MATUGEN_VERSION-x86_64.tar.gz"
+# adw-gtk3, the GTK 3 theme milk colours (appearance.themeApps), where the distribution has no package.
+ADW_GTK3_VERSION="6.5"
+ADW_GTK3_URL="https://github.com/lassekongo83/adw-gtk3/releases/download/v$ADW_GTK3_VERSION/adw-gtk3v$ADW_GTK3_VERSION.tar.xz"
 DATA_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/milk"
 FONT_DIR="$DATA_DIR/fonts"
 BIN_DIR="$HOME/.local/bin"
@@ -546,7 +549,8 @@ case "$distro" in
         )
         spoil_pkgs=(mpv ffmpegthumbnailer ffmpeg libarchive zip unzip "7zip|p7zip" alacritty)
         lactase_pkgs=(libxcomposite libxdamage libxrender mesa libglvnd)
-        optional=(alacritty rofi brightnessctl playerctl maim xclip flameshot "?unrar" network-manager-applet)
+        optional=(alacritty rofi brightnessctl playerctl maim xclip flameshot "?unrar" network-manager-applet
+                  adw-gtk-theme qt5ct qt6ct)           # GTK and Qt apps in milk's colours
         odin_pkg=odin; matugen_pkg=matugen ;;
     debian)
         required=(
@@ -562,7 +566,8 @@ case "$distro" in
         )
         spoil_pkgs=(mpv ffmpegthumbnailer ffmpeg libarchive-tools zip unzip "7zip|p7zip-full" alacritty)
         lactase_pkgs=(libxcomposite-dev libxdamage-dev libxrender-dev libgl-dev libgl1-mesa-dri)
-        optional=(alacritty rofi brightnessctl playerctl maim xclip flameshot "?unrar|unrar-free" network-manager-gnome) ;;
+        optional=(alacritty rofi brightnessctl playerctl maim xclip flameshot "?unrar|unrar-free" network-manager-gnome
+                  "?qt5ct" "?qt6ct") ;;
     fedora)
         required=(
             gcc git clang curl pam-devel
@@ -578,7 +583,8 @@ case "$distro" in
         )
         spoil_pkgs=(mpv ffmpegthumbnailer "ffmpeg-free|ffmpeg" bsdtar zip unzip "7zip|p7zip" alacritty)
         lactase_pkgs=(libXcomposite-devel libXdamage-devel libXrender-devel mesa-libGL-devel mesa-dri-drivers)
-        optional=(alacritty rofi brightnessctl playerctl maim xclip flameshot "?unrar" network-manager-applet)
+        optional=(alacritty rofi brightnessctl playerctl maim xclip flameshot "?unrar" network-manager-applet
+                  "?adw-gtk3-theme" qt5ct qt6ct)
         matugen_pkg=matugen ;;
     opensuse)
         required=(
@@ -595,7 +601,7 @@ case "$distro" in
         )
         spoil_pkgs=(mpv ffmpegthumbnailer "ffmpeg-7|ffmpeg" bsdtar zip unzip "7zip|p7zip" alacritty)
         lactase_pkgs=(libXcomposite-devel libXdamage-devel libXrender-devel Mesa-libGL-devel Mesa-dri)
-        optional=(alacritty rofi brightnessctl playerctl maim xclip flameshot "?unrar" NetworkManager-applet) ;;
+        optional=(alacritty rofi brightnessctl playerctl maim xclip flameshot "?unrar" NetworkManager-applet qt5ct qt6ct) ;;
     void)
         required=(
             base-devel git clang curl pam-devel
@@ -610,7 +616,7 @@ case "$distro" in
         )
         spoil_pkgs=(mpv ffmpegthumbnailer ffmpeg bsdtar zip unzip "7zip|p7zip" alacritty)
         lactase_pkgs=(libXcomposite-devel libXdamage-devel libXrender-devel MesaLib-devel libglvnd-devel mesa-dri)
-        optional=(alacritty rofi brightnessctl playerctl maim xclip flameshot "?unrar" network-manager-applet)
+        optional=(alacritty rofi brightnessctl playerctl maim xclip flameshot "?unrar" network-manager-applet qt5ct qt6ct)
         matugen_pkg=matugen
         services=(dbus elogind NetworkManager bluetooth) ;;
     *)
@@ -821,6 +827,24 @@ else
     warn "$(t "não foi possível baixar o matugen; o tema do papel de parede fica indisponível" \
               "could not download matugen; the wallpaper theme stays unavailable" \
               "no se pudo descargar matugen; el tema del fondo no estará disponible")"
+fi
+
+# adw-gtk3: GTK 3 apps take milk's colours in full (and change them live) with it.
+themes_dir="${XDG_DATA_HOME:-$HOME/.local/share}/themes"
+if [ "$minimal" -eq 1 ]; then
+    :
+elif [ -d /usr/share/themes/adw-gtk3 ] || [ -d "$themes_dir/adw-gtk3" ]; then
+    ok "$(t "tema GTK adw-gtk3 instalado" "GTK theme adw-gtk3 installed" "tema GTK adw-gtk3 instalado")"
+elif curl -fsSL "$ADW_GTK3_URL" -o "$tmp/adw-gtk3.tar.xz" && mkdir -p "$tmp/adw" && tar xJf "$tmp/adw-gtk3.tar.xz" -C "$tmp/adw"; then
+    mkdir -p "$themes_dir"
+    for theme in adw-gtk3 adw-gtk3-dark; do
+        [ -d "$tmp/adw/$theme" ] && cp -r "$tmp/adw/$theme" "$themes_dir/"
+    done
+    ok "$(t "tema GTK adw-gtk3 $ADW_GTK3_VERSION em $themes_dir" "GTK theme adw-gtk3 $ADW_GTK3_VERSION in $themes_dir" "tema GTK adw-gtk3 $ADW_GTK3_VERSION en $themes_dir")"
+else
+    warn "$(t "não foi possível baixar o adw-gtk3; apps GTK 3 pegam só parte das cores do milk" \
+              "could not download adw-gtk3; GTK 3 apps take only part of milk's colours" \
+              "no se pudo descargar adw-gtk3; las apps GTK 3 toman solo parte de los colores de milk")"
 fi
 
 # --- 4. icon font ---------------------------------------------------------------------------

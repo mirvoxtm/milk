@@ -3,6 +3,7 @@
     "animationScale": 0.7,
     "matugenScheme": "tonal-spot",
     "theme": "milk",
+    "themeApps": true,
     "variant": "light"
   },
   "bar": {

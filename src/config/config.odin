@@ -130,6 +130,7 @@ Appearance_Options :: struct {
 	animation_scale: f64,            // multiplies every UI/window animation duration: 0 = off, 0.5 = twice as fast, 1 = normal
 	custom_themes:   []Custom_Theme, // appearance.customThemes, sorted by name
 	matugen_scheme:  string,         // the "wallpaper" theme's matugen scheme (MATUGEN_SCHEMES)
+	theme_apps:      bool,           // appearance.themeApps: GTK and Qt apps take milk's colours (milk/apptheme.odin)
 }
 
 // A theme made by the user in the settings app:
@@ -1066,7 +1067,7 @@ destroy_menu_items :: proc(items: []Menu_Item) {
 @(private)
 parse_extras :: proc(l: ^Loader, root: json.Object, cfg: ^Config) -> bool {
 	ap := get_object(l, root, "appearance", "milk.json") or_return
-	reject_unknown(l, ap, {"theme", "variant", "animationScale", "customThemes", "matugenScheme"}, "appearance") or_return
+	reject_unknown(l, ap, {"theme", "variant", "animationScale", "customThemes", "matugenScheme", "themeApps"}, "appearance") or_return
 	parse_custom_themes(l, ap, cfg) or_return
 	names := make([dynamic]string, context.temp_allocator)
 	for p in THEME_PRESETS { append(&names, p.name) }
@@ -1076,6 +1077,7 @@ parse_extras :: proc(l: ^Loader, root: json.Object, cfg: ^Config) -> bool {
 	cfg.appearance.variant = get_choice(l, ap, "variant", "appearance", "light", THEME_VARIANTS) or_return
 	cfg.appearance.matugen_scheme = get_choice(l, ap, "matugenScheme", "appearance", "tonal-spot", MATUGEN_SCHEMES) or_return
 	cfg.appearance.animation_scale = get_number(l, ap, "animationScale", "appearance", 0.7, 0, 3) or_return
+	cfg.appearance.theme_apps = get_bool(l, ap, "themeApps", "appearance", true) or_return
 
 	no := get_object(l, root, "notifications", "milk.json") or_return
 	reject_unknown(l, no, {"enabled", "timeout", "maxHistory", "doNotDisturb", "position"}, "notifications") or_return

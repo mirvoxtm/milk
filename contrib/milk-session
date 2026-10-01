@@ -23,9 +23,21 @@ esac
 # describe an earlier Wayland one; point it at this X session.
 export XDG_CURRENT_DESKTOP="${XDG_CURRENT_DESKTOP:-milk}"
 unset WAYLAND_DISPLAY
+
+# Qt apps take milk's colours (appearance.themeApps) through qt5ct / qt6ct,
+# unless the session already chose a platform theme. "qt5ct" serves both Qt 5
+# (qt5ct) and Qt 6 (qt6ct answers to that name too); with qt6ct alone, "qt6ct".
+if [ -z "$QT_QPA_PLATFORMTHEME" ]; then
+    if command -v qt5ct >/dev/null 2>&1; then
+        export QT_QPA_PLATFORMTHEME=qt5ct
+    elif command -v qt6ct >/dev/null 2>&1; then
+        export QT_QPA_PLATFORMTHEME=qt6ct
+    fi
+fi
+
 command -v systemctl >/dev/null 2>&1 && systemctl --user unset-environment WAYLAND_DISPLAY 2>/dev/null
 command -v dbus-update-activation-environment >/dev/null 2>&1 &&
     dbus-update-activation-environment --systemd DISPLAY XAUTHORITY XDG_CURRENT_DESKTOP \
-        XDG_SESSION_TYPE XDG_SESSION_DESKTOP DESKTOP_SESSION 2>/dev/null
+        XDG_SESSION_TYPE XDG_SESSION_DESKTOP DESKTOP_SESSION ${QT_QPA_PLATFORMTHEME:+QT_QPA_PLATFORMTHEME} 2>/dev/null
 
 exec "$dir/milk" start --foreground

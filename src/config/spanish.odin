@@ -497,6 +497,9 @@ SPANISH := [][2]string{
 	{"Volume down", "Bajar el volumen"},
 	{"Brightness up", "Subir el brillo"},
 	{"Brightness down", "Bajar el brillo"},
+	// GTK and Qt apps in milk's colours (appearance.themeApps).
+	{"Colour GTK and Qt apps", "Colorear apps GTK y Qt"},
+	{"Other apps use the theme's colours too", "Las demás apps también usan los colores del tema"},
 	// The lock screen, idle handling and the session menu (package lock).
 	{"Lock", "Bloquear"},
 	{"Lock the screen", "Bloquear la pantalla"},

@@ -47,6 +47,8 @@ Control :: enum {
 	Di_Enabled, Di_Shortcut_Mode, Di_Size, Di_Single, Di_Thumbs, Di_Hidden, Di_Sort, Di_New_Icons,
 	// display.odin
 	Nl_Enabled, Nl_Mode, Nl_Transition, Nl_From, Nl_To, Nl_Lat, Nl_Lon, Osd_Position,
+	Theme_Apps, // appearance.themeApps (GTK and Qt apps in milk's colours)
+	// lock.odin
 	Lock_Enabled, Lock_After, Dim_After, Screen_Off_After, Suspend_After, Lock_On_Suspend, Inhibit_Fullscreen,
 }
 
@@ -77,6 +79,7 @@ Settings :: struct {
 	clip_persist:   bool,
 	clip_max:       int,
 	fx_enabled:     bool,                 // compositor.enabled (lactase; see compositor.odin)
+	theme_apps:     bool,                 // appearance.themeApps
 	// Janelas and Área de trabalho (windows.odin).
 	wm_floating:    bool,
 	win_tab:        int, // floating mode: 0 general, 1 title bar, 2 behaviour
@@ -189,6 +192,7 @@ settings_load_values :: proc(w: ^Wizard) {
 	s.clip_persist = cfg.clipboard.persist
 	s.clip_max = cfg.clipboard.max_items
 	s.fx_enabled = cfg.compositor.enabled
+	s.theme_apps = cfg.appearance.theme_apps
 	windows_load_values(w)
 	display_load_values(w)
 	lock_load_values(w)
@@ -359,6 +363,11 @@ draw_settings :: proc(w: ^Wizard, cv: ^tx.Canvas) {
 		labels := []string{tr(w, "Desligadas", "Off"), tr(w, "Rápidas", "Fast"), tr(w, "Normais", "Normal"), tr(w, "Lentas", "Slow")}
 		sw := min(i32(440), row.w / 2 + 40)
 		choice_control(w, cv, {row.x + row.w - sw, row.y + 8, sw, 40}, labels, anim_index(s.anim_scale), .Anim_Speed)
+		row.y += SET_ROW_H
+		fill_rounded(cv, {row.x, row.y - 1, row.w, 1}, 0, mix(th.bg, th.muted, 0.25))
+		row_label(w, row, tr(w, "Colorir apps GTK e Qt", "Colour GTK and Qt apps"),
+		          tr(w, "Os outros aplicativos também usam as cores do tema", "Other apps use the theme's colours too"))
+		toggle(w, cv, row, s.theme_apps, .Theme_Apps)
 	case .Wallpapers:
 		draw_wallpaper_page(w, cv, c)
 	case .Bar:
@@ -790,6 +799,9 @@ toggle_control :: proc(w: ^Wizard, ctrl: Control) {
 	case .Fx_Enabled:
 		s.fx_enabled = !s.fx_enabled
 		set_edit(w, "compositor.enabled", json.Boolean(s.fx_enabled))
+	case .Theme_Apps:
+		s.theme_apps = !s.theme_apps
+		set_edit(w, "appearance.themeApps", json.Boolean(s.theme_apps))
 	case:
 		if !windows_toggle(w, ctrl) && !display_toggle(w, ctrl) && !lock_toggle(w, ctrl) { return }
 	}
