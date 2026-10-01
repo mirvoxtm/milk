@@ -397,6 +397,7 @@ drawn_capacity :: proc(d: ^Daemon) -> int {
 
 // Forget the drawn wallpapers (the screen size changed).
 wallpaper_forget_drawn :: proc(d: ^Daemon) {
+	preload_reset(d)
 	drawn_clear(d)
 	delete(d.wallpaper.shown)
 	d.wallpaper.shown = ""

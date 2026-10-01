@@ -53,6 +53,7 @@ Daemon :: struct {
 	thumbs:         Thumbs,         // picture previews
 	rename:         Rename_Editor,
 	palette:        Palette_State,  // the wallpaper theme's matugen runs
+	preload:        Preload,        // wallpapers drawn ahead of time (preload.odin)
 	menu:           menu.Menu,      // an icon's context menu
 	menu_targets:   [dynamic]Menu_Target,
 	clipboard:      Clipboard_Owner,
@@ -112,6 +113,7 @@ create :: proc(c: ^tx.Connection, cfg: ^config.Config, runtime_root: string) -> 
 	files_init(d)
 	palette_init(d)
 	wallpaper_init(d)
+	preload_init(d)
 	return d, true
 }
 
@@ -130,6 +132,7 @@ destroy :: proc(d: ^Daemon) {
 	files_destroy(d)
 	thumbs_destroy(d)
 	palette_destroy(d)
+	preload_destroy(d) // before the drawn pixmaps go
 	wallpaper_destroy(d)
 	places_destroy(d)
 	clipboard_destroy(d)
@@ -215,6 +218,7 @@ poll_fds :: proc(d: ^Daemon) -> []i32 {
 	if fd, ok := thumbs_fd(d); ok { append(&out, fd) }
 	if d.palette.job.fd >= 0 { append(&out, i32(d.palette.job.fd)) }
 	if d.wallpaper.feh.fd >= 0 { append(&out, i32(d.wallpaper.feh.fd)) }
+	if fd, ok := preload_fd(d); ok { append(&out, fd) }
 	return out[:]
 }
 
@@ -224,6 +228,7 @@ handle_fd :: proc(d: ^Daemon, fd: i32) {
 	if t, ok := thumbs_fd(d); ok && t == fd { thumbs_collect(d) }
 	if d.palette.job.fd >= 0 && i32(d.palette.job.fd) == fd { palette_read(d) }
 	if d.wallpaper.feh.fd >= 0 && i32(d.wallpaper.feh.fd) == fd { wallpaper_feh_read(d) }
+	if p, ok := preload_fd(d); ok && p == fd { preload_collect(d) }
 	tx.flush(d.c)
 }
 
@@ -245,6 +250,7 @@ reload :: proc(d: ^Daemon, cfg: ^config.Config) {
 	indicator_hide(d)
 	d.cfg = cfg
 	ensure_runtime_dirs(d)
+	preload_reset(d) // the pictures, the mode or the colours may have changed
 	wallpaper_prune(d)
 	places_reread(d) // DesktopIcons.json may have been edited by hand
 	icons_destroy(&d.icons)
@@ -317,6 +323,7 @@ switch_area :: proc(d: ^Daemon, index: int) {
 	if d.cfg.linux.indicator.enabled && !d.quiet {
 		indicator_show(d, index, ws.name if known else "")
 	}
+	preload_schedule(d)
 	tx.flush(d.c)
 	log.debugf("Area %d applied in %.0f ms", index, (tx.now() - started) * 1000)
 }
