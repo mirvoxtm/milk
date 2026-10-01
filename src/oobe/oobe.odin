@@ -53,7 +53,7 @@ Action :: enum {
 	Bar_Choice,
 	// Settings app
 	Wm_Choice, Di_Choice, // wizard: tiling/floating, desktop icons
-	Section, Step, Toggle, Choice, Text_Field, Rerun_Wizard, Open_Config, Fx_Open, Win_Tab,
+	Section, Step, Toggle, Choice, Text_Field, Rerun_Wizard, Open_Config, Update_Milk, Fx_Open, Win_Tab,
 	Lock_Now, // settings → lock.odin
 	Sc_Add, Sc_Edit, Sc_Delete, Sc_Capture, Sc_Kind, Sc_App, Sc_Save, Sc_Cancel, Sc_Builtin, Sc_Action,
 	Th_New, Th_Edit, Th_Slot, Th_Variant, Th_Slider, Th_Swatch, Th_Save, Th_Cancel, Th_Delete, Th_Scheme,
@@ -608,7 +608,7 @@ do_action :: proc(w: ^Wizard, action: Action, arg: int) {
 	case .Di_Choice:
 		w.desktop_icons = !w.desktop_icons
 		w.dirty = true
-	case .Section, .Step, .Toggle, .Choice, .Text_Field, .Rerun_Wizard, .Open_Config, .Fx_Open, .Win_Tab, .Lock_Now:
+	case .Section, .Step, .Toggle, .Choice, .Text_Field, .Rerun_Wizard, .Open_Config, .Update_Milk, .Fx_Open, .Win_Tab, .Lock_Now:
 		settings_action(w, action, arg)
 	case .Sc_Add, .Sc_Edit, .Sc_Delete, .Sc_Capture, .Sc_Kind, .Sc_App, .Sc_Save, .Sc_Cancel, .Sc_Builtin, .Sc_Action:
 		shortcuts_action(w, action, arg)

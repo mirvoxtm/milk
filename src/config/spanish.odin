@@ -441,6 +441,12 @@ SPANISH := [][2]string{
 	{"Copy paths", "Copiar rutas"},
 	{"Rename…", "Cambiar nombre…"},
 	{"Move to Trash", "Mover a la papelera"},
+	// Settings → About: milk update.
+	{"Update milk…", "Actualizar milk…"},
+	{"Downloads and builds milk, Spoil and lactase, then restarts milk without closing your windows.",
+	 "Descarga y compila milk, Spoil y lactase y reinicia milk sin cerrar tus ventanas."},
+	{"Press Enter to close.", "Pulsa Enter para cerrar."},
+	{"Could not open the terminal", "No se pudo abrir el terminal"},
 	// Desktop icons kept to some areas.
 	{"Show on", "Mostrar en"},
 	{"Area", "Área"},

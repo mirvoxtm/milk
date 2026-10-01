@@ -55,6 +55,9 @@ every area keeps its own wallpaper, colours and icons. right-click a desktop ico
 - **gtk and qt apps** take milk's colours too, and follow them live (with adw-gtk3 and qt5ct/qt6ct, which the installer adds).
 
 ## updating
+
+`milk update` pulls milk, spoil and lactase, rebuilds them and restarts milk in place - your windows stay open. the same lives in settings → about → update milk. `milk update check` only tells you whether there's something new.
+
 updating from a version that kept `milk.json` inside the clone: if `git pull` refuses because of it, run `git checkout -- milk.json && git pull`. 
 
 milk then starts from fresh settings and shows the setup again.

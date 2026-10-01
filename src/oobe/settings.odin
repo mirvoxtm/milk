@@ -670,6 +670,37 @@ draw_about :: proc(w: ^Wizard, cv: ^tx.Canvas, c: tx.Rect) {
 	button(w, cv, {c.x + bw + 12, y, ew, BUTTON_H}, edit, .Text, .Open_Config)
 	y += BUTTON_H + 12
 	text(w, w.f_small, c.x, y, 22, tr(w, "O assistente aparece no próximo início do milk.", "The wizard appears the next time milk starts."), th.muted)
+	y += 46
+	update := tr(w, "Atualizar o milk…", "Update milk…")
+	uw := button_width(w, update, .Arrow_Down)
+	button(w, cv, {c.x, y, uw, BUTTON_H}, update, .Tonal, .Update_Milk, 0, .Arrow_Down)
+	y += BUTTON_H + 12
+	text(w, w.f_small, c.x, y, 22, ellipsize(w, w.f_small, tr(w, "Baixa e compila o milk, o Spoil e o lactase e reinicia o milk sem fechar suas janelas.",
+	                                                           "Downloads and builds milk, Spoil and lactase, then restarts milk without closing your windows."), c.w), th.muted)
+}
+
+// `milk update` in the configured terminal, which stays open on the result.
+@(private)
+run_update_in_terminal :: proc(w: ^Wizard) {
+	exe, err := os.get_executable_path(context.temp_allocator)
+	if err != nil { return }
+	exe = strings.trim_suffix(exe, " (deleted)")
+	script := fmt.tprintf("'%s' update; printf '\n%s'; read _", exe, tr(w, "Pressione Enter para fechar.", "Press Enter to close."))
+	terminal := strings.fields(w.cfg.wm.terminal, context.temp_allocator)
+	if len(terminal) == 0 { terminal = {"xterm"} }
+	argv := make([dynamic]string, context.temp_allocator)
+	append(&argv, ..terminal)
+	// gnome-terminal and its kin take the command after "--"; the others after -e.
+	switch strings.to_lower(terminal[0], context.temp_allocator) {
+	case "gnome-terminal", "kgx", "ptyxis", "tilix": append(&argv, "--")
+	case "wezterm": append(&argv, "start", "--")
+	case: append(&argv, "-e")
+	}
+	append(&argv, "sh", "-c", script)
+	if _, perr := os.process_start(os.Process_Desc{command = argv[:]}); perr != nil {
+		log.warnf("Settings: cannot open %s for milk update: %v", terminal[0], perr)
+		show_notice(w, tr(w, "Não foi possível abrir o terminal", "Could not open the terminal"))
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -719,6 +750,8 @@ settings_action :: proc(w: ^Wizard, action: Action, arg: int) {
 		path := join_path({w.runtime_root, MARKER_NAME})
 		if os.exists(path) { _ = os.remove(path) }
 		show_notice(w, tr(w, "O assistente abrirá no próximo início", "The wizard will open next time"))
+	case .Update_Milk:
+		run_update_in_terminal(w)
 	case .Fx_Open:
 		open_lactase_settings(w)
 	case .Lock_Now:

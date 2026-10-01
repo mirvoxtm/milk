@@ -62,7 +62,7 @@ usage: milk [command] [options]
 
 commands:
   start        run in the background, replacing a running instance   [default]
-  restart      same as start
+  restart      restart the running instance in place (windows stay open)
   stop         stop the running instance
   status       show whether milk is running and the active area
   reload       re-read milk.json in the running instance
@@ -70,6 +70,8 @@ commands:
   setup        run the setup wizard (theme, wallpapers, bar, keyboard) now
   settings     open the settings app (optionally on a section: wallpapers, windows, desktop...)
   switch N     ask the window manager to activate area N
+  update       pull milk, Spoil and lactase, rebuild them and restart in place
+               ("update check" only says whether there is something new)
   lock         lock the screen (asks the running milk; locks by itself when none runs)
   version      print the version
 
@@ -100,7 +102,9 @@ main :: proc() {
 
 	code := 0
 	switch opts.command {
-	case "start", "restart": code = cmd_start(&opts)
+	case "start":            code = cmd_start(&opts)
+	case "restart":          code = cmd_restart(&opts)
+	case "update":           code = cmd_update(&opts)
 	case "stop":             code = cmd_stop(&opts)
 	case "status":           code = cmd_status(&opts)
 	case "reload":           code = cmd_reload(&opts)
@@ -309,6 +313,7 @@ signal_handler :: proc "c" (sig: posix.Signal) {
 	#partial switch sig {
 	case .SIGTERM, .SIGINT: g_stop = true
 	case .SIGHUP:           g_reload = true
+	case .SIGUSR1:          g_restart = true; g_stop = true
 	case .SIGUSR2:          g_lock = true // `milk lock` (session.odin)
 	case:
 	}
@@ -326,13 +331,14 @@ install_signals :: proc() -> (wake_read: posix.FD, ok: bool) {
 	for fd in fds {
 		flags := posix.fcntl(fd, .GETFL)
 		posix.fcntl(fd, .SETFL, flags | c.int(posix.O_NONBLOCK))
+		posix.fcntl(fd, .SETFD, c.int(posix.FD_CLOEXEC)) // not inherited by a restart
 	}
 	g_wake_fd = fds[1]
 	act: posix.sigaction_t
 	act.sa_handler = signal_handler
 	posix.sigemptyset(&act.sa_mask)
 	act.sa_flags = {.RESTART}
-	for sig in ([]posix.Signal{.SIGTERM, .SIGINT, .SIGHUP, .SIGUSR2, .SIGCHLD}) {
+	for sig in ([]posix.Signal{.SIGTERM, .SIGINT, .SIGHUP, .SIGUSR1, .SIGUSR2, .SIGCHLD}) {
 		posix.sigaction(sig, &act, nil)
 	}
 	ignore: posix.sigaction_t
@@ -400,7 +406,10 @@ cmd_start :: proc(opts: ^Options) -> int {
 		}
 	}
 	context.logger = make_logger(opts)
-	return run(opts, cfg)
+	code := run(opts, cfg)
+	// SIGUSR1 (`milk restart`, `milk update`): everything was let go, start again in this process.
+	if g_restart { restart_self() }
+	return code
 }
 
 Runner :: struct {
@@ -499,6 +508,11 @@ run :: proc(opts: ^Options, cfg: ^config.Config) -> int {
 	// Everything milk starts (the settings app from the gear card, helper
 	// scripts) finds this instance's runtime folder, pid file included.
 	os.set_env("MILK_RUNTIME", opts.runtime_root)
+	// Restarted in place: the applications the previous image started are ours to reap.
+	if v, found := os.lookup_env("MILK_RESTARTED", context.temp_allocator); found && v != "" {
+		os.unset_env("MILK_RESTARTED")
+		adopt_children()
+	}
 	// Spoil, lactase and the settings app read the same milk.json.
 	if abs, ok := filepath.abs(opts.config_path, context.temp_allocator); ok == nil { os.set_env("MILK_CONFIG", abs) }
 	pid_file := join({opts.runtime_root, PID_NAME}, context.allocator)
@@ -586,7 +600,8 @@ run :: proc(opts: ^Options, cfg: ^config.Config) -> int {
 	// The gamma ramps (night light, dimming); destroyed before the X
 	// connection closes, which puts the original ramps back.
 	r.night = nightlight.create(c, cfg)
-	defer nightlight.destroy(r.night, false)
+	// Restarting in place keeps the screen as it is; the new image takes over the ramps.
+	defer nightlight.destroy(r.night, g_restart)
 	session_start(&r)
 	defer session_stop(&r)
 
@@ -663,6 +678,7 @@ loop :: proc(r: ^Runner) {
 		if desktop.theme_changed(r.daemon) { reload_theme(r) }
 		now := tx.now()
 		compositor_reap(r)
+		reap_adopted()
 		apptheme_reap(r)
 		if r.manager != nil { wm.tick(r.manager, now) }
 		desktop.tick(r.daemon, now)
