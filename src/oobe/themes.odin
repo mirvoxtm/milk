@@ -189,7 +189,12 @@ sort_customs :: proc(w: ^Wizard) {
 @(private)
 custom_strip_height :: proc(w: ^Wizard, area: tx.Rect) -> i32 {
 	if w.mode != .Settings && len(w.customs) == 0 { return 0 }
-	return clamp(area.h / 3, 120, 170)
+	// As tall as what it shows: the title and one line, or up to two rows
+	// of themes (more scroll), so the cards above keep their size.
+	if len(w.customs) == 0 { return 14 + 42 + 34 }
+	cols: i32 = area.w >= 900 ? 4 : 3
+	rows := min((i32(len(w.customs)) + cols - 1) / cols, 2)
+	return 14 + 42 + rows * (52 + 12) - 12 + 10
 }
 
 // Three overlapping dots in a theme's colours.

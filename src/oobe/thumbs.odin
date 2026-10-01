@@ -28,6 +28,7 @@ import "core:thread"
 import tx "../tx"
 
 @(private) THUMB_W        :: 480
+@(private) PICTURE_THUMB  :: 256 // other pictures (profile picture candidates): square
 @(private) THUMB_H        :: 270
 @(private) MAX_CANDIDATES :: 60
 @(private) THUMB_WORKERS  :: 3
@@ -49,6 +50,7 @@ Candidate :: struct {
 	seen:   bool,        // the main thread noticed the final state
 	scaled: [2]Scaled,   // resized copies (wizard allocator)
 	alias:  int,         // a copy milk made of this candidate: the one shown instead, else -1
+	wallpaper: bool,     // landscape and big enough (written by the worker before `state`); else only a profile picture candidate
 }
 
 @(private)
@@ -218,9 +220,10 @@ thumb_worker :: proc(th: ^thread.Thread) {
 			sync.atomic_store(&item.state, Thumb_State.Failed)
 			continue
 		}
-		img, ok := load_thumb(item.path, t.cache_dir)
+		img, wallpaper, ok := load_thumb(item.path, t.cache_dir)
 		if ok {
 			item.thumb = img
+			item.wallpaper = wallpaper
 			sync.atomic_store(&item.state, Thumb_State.Ready)
 		} else {
 			sync.atomic_store(&item.state, Thumb_State.Failed)
@@ -230,43 +233,49 @@ thumb_worker :: proc(th: ^thread.Thread) {
 
 // Decode (or read from the cache) one thumbnail. Runs on a worker thread.
 @(private)
-load_thumb :: proc(path, cache_dir: string) -> (tx.Image, bool) {
+load_thumb :: proc(path, cache_dir: string) -> (thumb: tx.Image, wallpaper: bool, ok: bool) {
 	arena: virtual.Arena
-	if virtual.arena_init_growing(&arena) != nil { return {}, false }
+	if virtual.arena_init_growing(&arena) != nil { return {}, false, false }
 	defer virtual.arena_destroy(&arena)
 	scratch := virtual.arena_allocator(&arena)
 	context.temp_allocator = scratch
 	heap := runtime.heap_allocator()
 
+	// The cached thumbnail says what the picture is: THUMB_W × THUMB_H for a
+	// wallpaper, PICTURE_THUMB square for any other picture.
 	cache_file := ""
 	if cache_dir != "" {
 		if fi, err := os.stat(path, scratch); err == nil {
-			key := fmt.aprintf("%s|%d|%v|%dx%d", path, fi.size, fi.modification_time, THUMB_W, THUMB_H, allocator = scratch)
+			key := fmt.aprintf("%s|%d|%v|v2", path, fi.size, fi.modification_time, allocator = scratch)
 			cache_file = fmt.aprintf("%s/%16x.qoi", cache_dir, hash.fnv64a(transmute([]u8)key), allocator = scratch)
 			if data, rerr := os.read_entire_file(cache_file, scratch); rerr == nil {
 				img, lerr := qoi.load_from_bytes(data, {}, scratch)
-				if lerr == nil && img != nil && img.width == THUMB_W && img.height == THUMB_H && img.channels == 4 && img.depth == 8 {
-					out := tx.image_make(THUMB_W, THUMB_H, heap)
-					copy(out.rgba, img.pixels.buf[:])
-					return out, true
+				if lerr == nil && img != nil && img.channels == 4 && img.depth == 8 {
+					is_wallpaper := img.width == THUMB_W && img.height == THUMB_H
+					if is_wallpaper || (img.width == PICTURE_THUMB && img.height == PICTURE_THUMB) {
+						out := tx.image_make(i32(img.width), i32(img.height), heap)
+						copy(out.rgba, img.pixels.buf[:])
+						return out, is_wallpaper, true
+					}
 				}
 			}
 		}
 	}
 
 	data, rerr := os.read_entire_file(path, scratch)
-	if rerr != nil { return {}, false }
+	if rerr != nil { return {}, false, false }
 	img, lerr := image.load_from_bytes(data, {}, scratch)
-	if lerr != nil || img == nil { return {}, false }
-	// Portrait pictures and icons are no wallpapers.
-	if img.width < 640 || img.height < 360 || img.height > img.width { return {}, false }
-	src, ok := image_view(img, scratch)
-	if !ok { return {}, false }
-	out := cover_resize(src, THUMB_W, THUMB_H, heap)
+	if lerr != nil || img == nil { return {}, false, false }
+	if img.width < 96 || img.height < 96 { return {}, false, false } // icons
+	src, viewed := image_view(img, scratch)
+	if !viewed { return {}, false, false }
+	// Portrait and small pictures are no wallpapers, but may be profile pictures.
+	wallpaper = img.width >= 640 && img.height >= 360 && img.height <= img.width
+	out := wallpaper ? cover_resize(src, THUMB_W, THUMB_H, heap) : tx.image_square(src, PICTURE_THUMB, heap)
 
 	if cache_file != "" {
 		enc: image.Image
-		enc.width, enc.height, enc.channels, enc.depth = THUMB_W, THUMB_H, 4, 8
+		enc.width, enc.height, enc.channels, enc.depth = int(out.w), int(out.h), 4, 8
 		buf := make([dynamic]u8, len(out.rgba), scratch)
 		copy(buf[:], out.rgba)
 		enc.pixels = bytes.Buffer{buf = buf}
@@ -275,7 +284,7 @@ load_thumb :: proc(path, cache_dir: string) -> (tx.Image, bool) {
 			if os.rename(tmp, cache_file) != nil { os.remove(tmp) }
 		}
 	}
-	return out, true
+	return out, wallpaper, true
 }
 
 // An 8-bit RGBA view of a decoded image (converted when it is not RGBA8 already).
@@ -437,6 +446,20 @@ candidate_scaled :: proc(w: ^Wizard, index: int, sw, sh: i32) -> (tx.Image, bool
 // milk's own copies of pictures that are shown already.
 @(private)
 visible_candidates :: proc(w: ^Wizard) -> []int {
+	out := make([dynamic]int, context.temp_allocator)
+	for &item, i in w.thumbs.items {
+		if item.alias >= 0 { continue }
+		state := sync.atomic_load(&item.state)
+		if item.seen && state == .Failed { continue }
+		if state == .Ready && !item.wallpaper { continue } // a portrait, an avatar...
+		append(&out, i)
+	}
+	return out[:]
+}
+
+// Every picture that can be a profile picture (wallpapers included).
+@(private)
+picture_candidates :: proc(w: ^Wizard) -> []int {
 	out := make([dynamic]int, context.temp_allocator)
 	for &item, i in w.thumbs.items {
 		if item.alias >= 0 { continue }

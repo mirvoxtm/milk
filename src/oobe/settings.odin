@@ -83,6 +83,8 @@ Settings :: struct {
 	// Janelas and Área de trabalho (windows.odin).
 	wm_floating:    bool,
 	win_tab:        int, // floating mode: 0 general, 1 title bar, 2 behaviour
+	look_tab:       int, // Appearance: 0 theme, 1 general
+	avatar:         Avatar_State, // the profile picture (avatar.odin)
 	title_circles:  bool,
 	title_left:     bool,
 	title_center:   bool,
@@ -310,7 +312,7 @@ settings_build_base :: proc(w: ^Wizard) {
 section_info :: proc(w: ^Wizard, s: Section) -> (icon: Icon, title, desc: string) {
 	switch s {
 	case .Appearance:
-		return .Palette, tr(w, "Aparência", "Appearance"), tr(w, "Tema de cores e velocidade das animações.", "Colour theme and animation speed.")
+		return .Palette, tr(w, "Aparência", "Appearance"), tr(w, "Tema de cores, foto de perfil e animações.", "Colour theme, profile picture and animations.")
 	case .Wallpapers:
 		return .Photo, tr(w, "Papéis de parede", "Wallpapers"), tr(w, "Uma imagem para todas as áreas ou uma para cada área.", "One image for every area or one per area.")
 	case .Bar:
@@ -355,10 +357,23 @@ draw_settings :: proc(w: ^Wizard, cv: ^tx.Canvas) {
 			draw_theme_editor(w, cv, c)
 			break
 		}
-		anim_h: i32 = 70
-		draw_theme_page(w, cv, {c.x, c.y, c.w, c.h - anim_h})
-		row := tx.Rect{c.x, c.y + c.h - anim_h + 14, c.w, SET_ROW_H}
-		fill_rounded(cv, {row.x, row.y - 8, row.w, 1}, 0, mix(th.bg, th.muted, 0.25))
+		if s.avatar.picking {
+			draw_avatar_picker(w, cv, c)
+			break
+		}
+		// Two tabs, so the theme cards keep their size in a small window.
+		segmented(w, cv, {c.x, c.y, min(i32(360), c.w), 40}, {tr(w, "Tema", "Theme"), tr(w, "Geral", "General")},
+		          {.Palette, .Sparkles}, s.look_tab, .Look_Tab)
+		body := tx.Rect{c.x, c.y + 56, c.w, c.h - 56}
+		if s.look_tab == 0 {
+			draw_theme_page(w, cv, body)
+			break
+		}
+		row := tx.Rect{body.x, body.y, body.w, SET_ROW_H + 8}
+		draw_avatar_row(w, cv, row)
+		row.y += row.h
+		row.h = SET_ROW_H
+		fill_rounded(cv, {row.x, row.y - 1, row.w, 1}, 0, mix(th.bg, th.muted, 0.25))
 		row_label(w, row, tr(w, "Velocidade das animações", "Animation speed"), tr(w, "Janelas, barra, painéis e avisos", "Windows, bar, panels and toasts"))
 		labels := []string{tr(w, "Desligadas", "Off"), tr(w, "Rápidas", "Fast"), tr(w, "Normais", "Normal"), tr(w, "Lentas", "Slow")}
 		sw := min(i32(440), row.w / 2 + 40)
@@ -714,6 +729,7 @@ settings_action :: proc(w: ^Wizard, action: Action, arg: int) {
 		sec := Section(clamp(arg, 0, len(Section) - 1))
 		if sec != s.section {
 			capture_stop(w)
+			s.avatar.picking = false
 			s.section = sec
 			w.focus = .None
 			w.hover = {}
@@ -742,6 +758,17 @@ settings_action :: proc(w: ^Wizard, action: Action, arg: int) {
 		settings_changed(w, .Values)
 	case .Win_Tab:
 		s.win_tab = clamp(arg, 0, 2)
+	case .Look_Tab:
+		s.look_tab = clamp(arg, 0, 1)
+	case .Avatar_Pick:
+		s.avatar.picking = true
+		s.avatar.scroll = 0
+	case .Avatar_Back:
+		s.avatar.picking = false
+	case .Avatar_Tile:
+		avatar_choose(w, arg)
+	case .Avatar_Remove:
+		avatar_remove(w)
 	case .Text_Field:
 		w.focus = .Text
 		s.text_target = arg

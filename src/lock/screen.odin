@@ -73,8 +73,18 @@ render_panel :: proc(l: ^Locker, p: ^Panel, now: f64) {
 	body_h := p.f_body != nil ? p.f_body.height : i32(22 * s)
 	caps_y := msg_y + body_h + i32(10 * s)
 
-	// Shapes.
-	tx.canvas_fill_circle(cv, f32(W) / 2, av_cy, av_r, st.accent)
+	// Shapes: the profile picture, or an accent circle with the user icon.
+	if l.face.w > 0 {
+		d := i32(2 * av_r)
+		if p.face.w != d {
+			if p.face.w > 0 { delete(p.face.rgba) }
+			p.face = tx.image_circle(l.face, d)
+		}
+		tx.canvas_fill_circle(cv, f32(W) / 2, av_cy, av_r + 3 * s, tx.color_with_alpha(st.bg, 200))
+		tx.canvas_blit_image(cv, p.face, W / 2 - d / 2, i32(av_cy) - d / 2)
+	} else {
+		tx.canvas_fill_circle(cv, f32(W) / 2, av_cy, av_r, st.accent)
+	}
 	tx.canvas_fill_rounded_rect(cv, field, f32(fh) / 2, tx.color_with_alpha(st.bg, 238))
 	switch l.state {
 	case .Wrong:
@@ -119,7 +129,9 @@ render_panel :: proc(l: ^Locker, p: ^Panel, now: f64) {
 	}
 	center(c, ts, p.f_clock, W, 0, l.clock_text, st.text)
 	center(c, ts, p.f_date, W, date_y, l.date_text, st.text_dim)
-	if p.f_icon != nil && tx.font_has_glyph(c, p.f_icon, ICON_USER) {
+	if l.face.w > 0 {
+		// The picture says who it is.
+	} else if p.f_icon != nil && tx.font_has_glyph(c, p.f_icon, ICON_USER) {
 		buf, n := utf8.encode_rune(ICON_USER)
 		glyph := string(buf[:n])
 		ext := tx.text_extents(c, p.f_icon, glyph)

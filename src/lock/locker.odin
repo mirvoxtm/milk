@@ -72,6 +72,7 @@ Panel :: struct {
 	f_body:     ^tx.Font,
 	f_small:    ^tx.Font,
 	f_icon:     ^tx.Font,
+	face:       tx.Image, // the profile picture, round, at this panel's size (w == 0: none)
 }
 
 @(private)
@@ -106,6 +107,7 @@ Locker :: struct {
 	next_clock:   f64,
 	next_regrab:  f64,
 	raise_wanted: bool,
+	face:         tx.Image, // the profile picture (~/.face), w == 0 when there is none
 	last_raise:   f64,
 	geometry_dirty: bool,
 	wallpaper_dirty: bool, // the root pixmap changed (feh after a screen change)
@@ -153,9 +155,11 @@ run_locker :: proc(config_path: string) -> int {
 	make_style(l)
 	l.service = pam_service()
 	user_names(l)
+	load_face(l)
 	defer {
 		delete(l.user)
 		delete(l.display_name)
+		if l.face.w > 0 { delete(l.face.rgba) }
 		delete(l.clock_text)
 		delete(l.date_text)
 	}
@@ -246,6 +250,19 @@ make_style :: proc(l: ^Locker) {
 
 @(private)
 tr :: proc(l: ^Locker, pt, en: string) -> string { return config.tr(l.style.lang, pt, en) }
+
+// The profile picture the settings app saves (~/.face; SDDM's ~/.face.icon too).
+@(private)
+load_face :: proc(l: ^Locker) {
+	home := os.get_env("HOME", context.temp_allocator)
+	if home == "" { return }
+	for name in ([]string{".face", ".face.icon"}) {
+		if img, ok := tx.image_load(join_path(home, name)); ok {
+			l.face = img
+			return
+		}
+	}
+}
 
 // The login name of this process's user and the name shown on the screen.
 @(private)
@@ -774,6 +791,7 @@ destroy_panels :: proc(l: ^Locker) {
 		tx.text_surface_destroy(&p.ts)
 		tx.pixmap_free(c, p.pixmap)
 		tx.canvas_destroy(&p.cv)
+		if p.face.w > 0 { delete(p.face.rgba) }
 		for f in ([]^tx.Font{p.f_clock, p.f_date, p.f_name, p.f_body, p.f_small, p.f_icon}) {
 			if f != nil { tx.font_close(c, f) }
 		}

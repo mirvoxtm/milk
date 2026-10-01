@@ -54,6 +54,7 @@ Action :: enum {
 	// Settings app
 	Wm_Choice, Di_Choice, // wizard: tiling/floating, desktop icons
 	Section, Step, Toggle, Choice, Text_Field, Rerun_Wizard, Open_Config, Update_Milk, Fx_Open, Win_Tab,
+	Look_Tab, Avatar_Pick, Avatar_Tile, Avatar_Remove, Avatar_Back, // settings → Appearance (avatar.odin)
 	Lock_Now, // settings → lock.odin
 	Sc_Add, Sc_Edit, Sc_Delete, Sc_Capture, Sc_Kind, Sc_App, Sc_Save, Sc_Cancel, Sc_Builtin, Sc_Action,
 	Th_New, Th_Edit, Th_Slot, Th_Variant, Th_Slider, Th_Swatch, Th_Save, Th_Cancel, Th_Delete, Th_Scheme,
@@ -62,7 +63,7 @@ Action :: enum {
 	Display_Ui, // Settings → Tela: the temperature slider, the time zone button (display.odin)
 }
 
-@(private) Scroll_Id :: enum { None, Layouts, Variants, Wallpapers, Shortcuts, Apps, Actions, Themes, Zone_Start, Zone_Center, Zone_End, Zone_Avail }
+@(private) Scroll_Id :: enum { None, Layouts, Variants, Wallpapers, Shortcuts, Apps, Actions, Themes, Zone_Start, Zone_Center, Zone_End, Zone_Avail, Avatars }
 
 @(private) Field :: enum { None, Search, Test, Text }
 
@@ -336,6 +337,7 @@ wizard_destroy :: proc(w: ^Wizard) {
 	keyboard_destroy(w)
 	settings_destroy(w)
 	themes_destroy(w)
+	avatar_destroy(w)
 	palette_view_destroy(w)
 	close_fonts(w)
 	tx.canvas_destroy(&w.base)
@@ -515,6 +517,7 @@ scroll_ptr :: proc(w: ^Wizard, id: Scroll_Id) -> ^i32 {
 	case .Zone_Center: return &w.set.lay.scroll[1]
 	case .Zone_End:   return &w.set.lay.scroll[2]
 	case .Zone_Avail: return &w.set.lay.scroll[3]
+	case .Avatars:    return &w.set.avatar.scroll
 	}
 	return nil
 }
@@ -538,7 +541,7 @@ on_keyboard_page :: proc(w: ^Wizard) -> bool {
 
 @(private)
 shows_thumbnails :: proc(w: ^Wizard) -> bool {
-	if w.mode == .Settings { return w.set.section == .Wallpapers }
+	if w.mode == .Settings { return w.set.section == .Wallpapers || (w.set.section == .Appearance && w.set.avatar.picking) }
 	return w.page == .Wallpaper || w.page == .Bar || w.page == .Windows || w.page == .Summary
 }
 
@@ -608,7 +611,8 @@ do_action :: proc(w: ^Wizard, action: Action, arg: int) {
 	case .Di_Choice:
 		w.desktop_icons = !w.desktop_icons
 		w.dirty = true
-	case .Section, .Step, .Toggle, .Choice, .Text_Field, .Rerun_Wizard, .Open_Config, .Update_Milk, .Fx_Open, .Win_Tab, .Lock_Now:
+	case .Section, .Step, .Toggle, .Choice, .Text_Field, .Rerun_Wizard, .Open_Config, .Update_Milk, .Fx_Open, .Win_Tab, .Lock_Now,
+	     .Look_Tab, .Avatar_Pick, .Avatar_Tile, .Avatar_Remove, .Avatar_Back:
 		settings_action(w, action, arg)
 	case .Sc_Add, .Sc_Edit, .Sc_Delete, .Sc_Capture, .Sc_Kind, .Sc_App, .Sc_Save, .Sc_Cancel, .Sc_Builtin, .Sc_Action:
 		shortcuts_action(w, action, arg)

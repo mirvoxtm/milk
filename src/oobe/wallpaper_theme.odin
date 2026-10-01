@@ -140,16 +140,19 @@ draw_wallpaper_card :: proc(w: ^Wizard, cv: ^tx.Canvas, r: tx.Rect, preview_h: i
 		tx.canvas_fill_rounded_rect(cv, p, 14, tx.color_with_alpha(th.field, 150))
 	}
 	ly := p.y + p.h + 8
-	text(w, w.f_h2, r.x + 18, ly, 26, ellipsize(w, w.f_h2, tr(w, "Papel de parede", "Wallpaper"), r.w - 36), usable ? th.fg : th.muted)
+	title := tr(w, "Papel de parede", "Wallpaper")
+	title_font := text_width(w, w.f_h2, title) <= r.w - 36 ? w.f_h2 : w.f_body // a narrow card: the smaller font, not "Papel de pa…"
+	text(w, title_font, r.x + 18, ly, 26, ellipsize(w, title_font, title, r.w - 36), usable ? th.fg : th.muted)
 	sub := tr(w, "Cores do papel de parede", "Colours of the wallpaper")
 	if !usable {
 		sub = tr(w, "Instale o matugen", "Install matugen")
 	} else if selected {
 		sub = scheme_title(w, w.pal.scheme)
 	}
-	sub_w := r.w - 36 - (selected ? 36 : 0)
+	sub_w := r.w - 36
 	text(w, w.f_small, r.x + 18, ly + 24, 20, ellipsize(w, w.f_small, sub, sub_w), mix(th.fg, th.muted, 0.6))
-	if selected { check_badge(w, cv, r.x + r.w - 18 - 12, ly + 24, 12) }
+	// On the picture's corner: the title below needs the whole width.
+	if selected { check_badge(w, cv, p.x + p.w - 16, p.y + p.h - 16, 12) }
 	if usable { add_hit(w, r, .Theme, WALLPAPER_INDEX) }
 }
 

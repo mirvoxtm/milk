@@ -156,7 +156,7 @@ draw_theme_preview :: proc(w: ^Wizard, cv: ^tx.Canvas, p: tx.Rect, pt: ^Theme) {
 
 	// Window.
 	win := tx.Rect{p.x + 22, bar.y + bar.h + 12, p.w - 44, p.y + p.h - 14 - (bar.y + bar.h + 12)}
-	if win.h < 40 { return }
+	if win.h < 34 { return }
 	shadow(cv, win, 12, 3, pt.dark ? 40 : 18, 2)
 	tx.canvas_fill_rounded_rect(cv, win, 12, pt.focus)
 	inner := tx.Rect{win.x + 2, win.y + 2, win.w - 4, win.h - 4}
