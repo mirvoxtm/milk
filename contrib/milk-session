@@ -11,6 +11,13 @@ printf '%s\n' "$dir" > "${XDG_CONFIG_HOME:-$HOME/.config}/milk/location"
 
 [ -f "$HOME/.Xresources" ] && command -v xrdb >/dev/null 2>&1 && xrdb -merge "$HOME/.Xresources"
 
+# The installer puts odin (when the distribution has no recent one), matugen
+# and the milk commands in ~/.local/bin; not every login shell adds it.
+case ":$PATH:" in
+    *":$HOME/.local/bin:"*) ;;
+    *) export PATH="$HOME/.local/bin:$PATH" ;;
+esac
+
 # Programs started through D-Bus or systemd (portals, flameshot) take their
 # environment from the user manager, which outlives sessions and may still
 # describe an earlier Wayland one; point it at this X session.

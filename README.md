@@ -8,7 +8,7 @@
 
 ## Installation
 
-On Arch Linux and its derivatives:
+On Arch, Debian/Ubuntu, Fedora, openSUSE, Void and the distributions based on them:
 
 ```sh
 git clone https://github.com/mirvoxtm/milk.git
@@ -16,7 +16,11 @@ cd milk
 ./install.sh
 ```
 
-the installer asks what you want, installs every dependency and also sets up [Spoil](https://github.com/mirvoxtm/spoil), the file manager, and [lactase](https://github.com/mirvoxtm/lactase), the compositor (shadows, animations, transparency, blur and smooth corners), next to milk.
+the installer recognises your distribution (if it can't, it asks you to pick one; `--distro` forces it), asks what you want, installs every dependency with your package manager and downloads the Odin compiler when your distribution has no recent one. 
+
+it also sets up [Spoil](https://github.com/mirvoxtm/spoil), the file manager and [lactase](https://github.com/mirvoxtm/lactase), the compositor (shadows, animations, transparency, blur and smooth corners).
+
+other goodies are optional but *highly* recommended to install and are automatically downloaded upon using the install script, my recommendation is defaulting to "yes" on the installer for the best experience.
 
 after that, log out and pick milk on the login screen. After every installation the setup walks you through
 
