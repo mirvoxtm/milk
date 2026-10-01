@@ -29,12 +29,12 @@ build_bindings :: proc(m: ^Manager) {
 	}
 
 	add_key(m, MOD, .XK_p, spawn, {cmd = s.launcher})
+	add_key(m, MOD, .XK_d, spawn, {cmd = s.launcher}) // in both modes
 	add_key(m, MOD, .XK_Return, spawn, {cmd = s.terminal})
 	add_key(m, MOD, .XK_j, focusstack, {i = +1})
 	add_key(m, MOD, .XK_k, focusstack, {i = -1})
 	if !s.floating {
 		add_key(m, MOD, .XK_i, incnmaster, {i = +1})
-		add_key(m, MOD, .XK_d, spawn, {cmd = s.launcher})
 		add_key(m, MOD + SHIFT, .XK_d, incnmaster, {i = -1})
 		add_key(m, MOD, .XK_h, setmfact, {f = -0.05})
 		add_key(m, MOD, .XK_l, setmfact, {f = +0.05})
@@ -83,7 +83,7 @@ build_bindings :: proc(m: ^Manager) {
 		act(m, MOD, .XK_Right, "snap-right")
 		act(m, MOD, .XK_h, "minimize")
 		act(m, MOD, .XK_c, "center")
-		act(m, MOD, .XK_d, "show-desktop")
+		act(m, MOD + SHIFT, .XK_d, "show-desktop") // Super+D stays the launcher
 		act(m, CTRL + ALT, .XK_Left, "view-prev")
 		act(m, CTRL + ALT, .XK_Right, "view-next")
 		act(m, CTRL + ALT + SHIFT, .XK_Left, "send-prev")

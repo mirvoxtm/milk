@@ -127,8 +127,7 @@ Builtin :: struct {
 @(private, rodata)
 BUILTINS := []Builtin{
 	{"mod+Return", "Abrir o terminal", "Open the terminal", 0},
-	{"mod+d mod+p", "Abrir o lançador de aplicativos", "Open the application launcher", 1},
-	{"mod+p", "Abrir o lançador de aplicativos", "Open the application launcher", 2},
+	{"mod+d mod+p", "Abrir o lançador de aplicativos", "Open the application launcher", 0},
 	{"mod+q mod+shift+c", "Fechar a janela", "Close the window", 0},
 	{"alt+F4", "Fechar a janela", "Close the window", 2},
 	{"alt+Tab alt+shift+Tab", "Alternar entre as janelas", "Switch between windows", 0},
@@ -144,7 +143,7 @@ BUILTINS := []Builtin{
 	{"mod+Left mod+Right", "Encaixar na metade esquerda / direita", "Snap to the left / right half", 2},
 	{"mod+h", "Minimizar", "Minimize", 2},
 	{"mod+c", "Centralizar a janela", "Centre the window", 2},
-	{"mod+d", "Mostrar a área de trabalho", "Show the desktop", 2},
+	{"mod+shift+d", "Mostrar a área de trabalho", "Show the desktop", 2},
 	{"alt+space", "Menu da janela", "Window menu", 2},
 	{"mod+shift+f", "Tela cheia", "Fullscreen", 0},
 	{"mod+#", "Ir para a área 1…9", "Go to area 1…9", 0},
