@@ -42,6 +42,10 @@ as of version 1.1.0, milk now also supports desktop icons with future support pl
 
 with matugen, the color scheme can even be picked up by your wallpaper!
 
+## your areas, your desktop
+
+every area keeps its own wallpaper, colours and icons. right-click a desktop icon → **show on** to keep it to some areas (steam on area 4 only).
+
 ## updating
 updating from a version that kept `milk.json` inside the clone: if `git pull` refuses because of it, run `git checkout -- milk.json && git pull`. 
 

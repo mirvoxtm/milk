@@ -32,6 +32,7 @@ windows_load_values :: proc(w: ^Wizard) {
 	s.di_thumbs = di.thumbnails
 	s.di_hidden = di.show_hidden
 	for name, i in SORT_NAMES { if name == di.sort { s.di_sort = i } }
+	s.di_new_here = di.new_icons == "current-area"
 	s.di_size = cfg.linux.shortcuts.icon_size
 	s.di_single = cfg.linux.shortcuts.single_click
 	for name, i in SHORTCUT_MODE_NAMES { if name == cfg.linux.shortcuts.mode { s.sc_mode = i } }
@@ -184,6 +185,10 @@ rows_desktop :: proc(w: ^Wizard, cv: ^tx.Canvas, c: tx.Rect, y: ^i32) {
 	row = next_row(w, cv, c, y, tr(w, "Organizar por", "Arrange by"), tr(w, "Para ícones que ainda não têm lugar", "For icons without a place yet"), off)
 	choice_control(w, cv, {row.x + row.w - cw, row.y + 8, cw, 40}, {tr(w, "Nome", "Name"), tr(w, "Tipo", "Type"), tr(w, "Data", "Date")},
 	               s.di_sort, .Di_Sort)
+	row = next_row(w, cv, c, y, tr(w, "Arquivos novos aparecem em", "New files appear on"),
+	               tr(w, "Por ícone: botão direito → Mostrar em", "Per icon: right-click → Show on"), off)
+	choice_control(w, cv, {row.x + row.w - cw, row.y + 8, cw, 40}, {tr(w, "Todas as áreas", "Every area"), tr(w, "Só na área atual", "Current area only")},
+	               s.di_new_here ? 1 : 0, .Di_New_Icons)
 }
 
 // ---------------------------------------------------------------------------
@@ -213,6 +218,9 @@ windows_choice :: proc(w: ^Wizard, ctrl: Control, opt: int) -> bool {
 		names := SORT_NAMES
 		s.di_sort = clamp(opt, 0, len(names) - 1)
 		set_edit(w, "linux.desktopIcons.sort", json.String(names[s.di_sort]))
+	case .Di_New_Icons:
+		s.di_new_here = opt == 1
+		set_edit(w, "linux.desktopIcons.newIcons", json.String(s.di_new_here ? "current-area" : "every-area"))
 	case .Di_Shortcut_Mode:
 		names := SHORTCUT_MODE_NAMES
 		s.sc_mode = clamp(opt, 0, len(names) - 1)

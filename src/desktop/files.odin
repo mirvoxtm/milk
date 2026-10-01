@@ -57,6 +57,7 @@ Desktop_Files :: struct {
 	rescan_at: f64,           // coalesced rescan deadline, 0 = none
 	poll_at:   f64,           // next check while there is no watch, 0 = none
 	stamp:     i64,           // the folder's mtime (ns) seen by the last scan, -1 = missing
+	listed:    bool,          // `items` is a listing of `dir` (later scans can tell new files)
 	warned:    bool,          // the folder could not be read (logged once)
 	truncated: bool,          // more than MAX_FOLDER_ENTRIES (logged once)
 }
@@ -100,12 +101,14 @@ files_configure :: proc(d: ^Daemon) {
 		files_unwatch(d)
 		delete(f.dir)
 		f.dir = strings.clone(dir)
+		f.listed = false
 		f.warned = false
 		f.truncated = false
 	}
 	f.enabled = opts.enabled
 	if !f.enabled {
 		items_clear(&f.items)
+		f.listed = false
 		if f.notify_fd >= 0 { linux.close(f.notify_fd) }
 		f.notify_fd = -1
 		f.rescan_at, f.poll_at = 0, 0
@@ -248,7 +251,9 @@ files_scan :: proc(d: ^Daemon, show: bool) {
 		}
 		f.truncated = !complete
 		follow_renames(d, f.items[:], items[:])
+		if f.listed && d.started { areas_adopt_new(d, added_names(f.items[:], items[:])) }
 		if complete { places_prune_folder(d, f.dir, names) }
+		f.listed = true
 	}
 	sort_items(items[:], d.cfg.linux.desktop_icons.sort)
 	items_clear(&f.items)
@@ -258,20 +263,41 @@ files_scan :: proc(d: ^Daemon, show: bool) {
 }
 
 // A file renamed outside milk (same inode, old name gone, new name without
-// a place) keeps its place.
+// a place or areas) keeps its place and its areas.
 @(private)
 follow_renames :: proc(d: ^Daemon, old, new: []Item) {
 	if len(old) == 0 { return }
 	names := make(map[string]bool, len(new), context.temp_allocator)
 	for it in new { names[it.name] = true }
 	for &it in new {
-		if _, placed := place_of(d, &it); placed { continue }
+		_, placed := place_of(d, &it)
+		_, kept := item_areas(d, &it)
+		if placed && kept { continue }
 		for &prev in old {
 			if prev.inode != it.inode || prev.name in names { continue }
-			if _, had := place_of(d, &prev); had { place_rename(d, prev.name, it.name) }
+			if _, had := place_of(d, &prev); had && !placed { place_rename(d, prev.name, it.name) }
+			if _, had := item_areas(d, &prev); had && !kept { areas_rename(d, prev.name, it.name) }
 			break
 		}
 	}
+}
+
+// Names in `new` that `old` did not have and that are not renames of its
+// entries (temp allocator).
+@(private)
+added_names :: proc(old, new: []Item) -> []string {
+	before := make(map[string]bool, len(old), context.temp_allocator)
+	for it in old { before[it.name] = true }
+	now := make(map[string]bool, len(new), context.temp_allocator)
+	for it in new { now[it.name] = true }
+	renamed := make(map[u64]bool, allocator = context.temp_allocator) // inodes of entries gone under their old name
+	for it in old { if it.name not_in now { renamed[it.inode] = true } }
+	out := make([dynamic]string, context.temp_allocator)
+	for it in new {
+		if it.name in before || it.inode in renamed { continue }
+		append(&out, it.name)
+	}
+	return out[:]
 }
 
 // One Item per entry of `dir` (dot files only with showHidden), and every

@@ -213,14 +213,18 @@ layer_set_area :: proc(d: ^Daemon, shortcuts: ^[dynamic]Shortcut, refresh: bool)
 	layer_refresh(d, refresh)
 }
 
-// Rebuild the list of shown items (area shortcuts, then the folder's files)
-// and bring the cells in line.
+// Rebuild the list of shown items (area shortcuts, then the folder's files,
+// leaving out those kept to other areas) and bring the cells in line.
 layer_refresh :: proc(d: ^Daemon, refresh: bool) {
 	l := &d.layer
 	items_clear(&l.items)
-	for it in l.area_items { append(&l.items, item_clone(it)) }
+	for &it in l.area_items {
+		if item_on_area(d, &it, d.area) { append(&l.items, item_clone(it)) }
+	}
 	if d.files.enabled {
-		for it in d.files.items { append(&l.items, item_clone(it)) }
+		for &it in d.files.items {
+			if item_on_area(d, &it, d.area) { append(&l.items, item_clone(it)) }
+		}
 	}
 	if len(l.items) == 0 && len(l.cells) == 0 { return }
 	layer_sync(d, refresh)

@@ -67,6 +67,7 @@
     "desktopIcons": {
       "enabled": false,
       "folder": null,
+      "newIcons": "every-area",
       "showHidden": false,
       "sort": "name",
       "thumbnails": true

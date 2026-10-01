@@ -168,6 +168,20 @@ desktop_context_menu :: proc(d: ^Daemon, index: int, be: ^xlib.XButtonEvent) {
 	if len(sel) == 1 && single.source == .Folder && !single.launcher {
 		append(&items, menu.Item{id = int(Menu_Action.Rename), label = tr(d, "Renomear…", "Rename…"), icon = ICON_RENAME})
 	}
+	// The areas that show them (not for the shortcuts of an area's own folder).
+	chosen := make([dynamic]^Item, context.temp_allocator)
+	for i in sel {
+		it := &l.items[l.cells[i].entry]
+		if !item_has_area_choice(d, it) {
+			clear(&chosen)
+			break
+		}
+		append(&chosen, it)
+	}
+	if len(chosen) > 0 {
+		append(&items, menu.Item{separator = true})
+		append(&items, areas_submenu(d, chosen[:]))
+	}
 	if files > 0 {
 		append(&items, menu.Item{separator = true})
 		append(&items, menu.Item{id = int(Menu_Action.Trash), label = tr(d, "Mover para a lixeira", "Move to Trash"), icon = ICON_TRASH})
@@ -187,7 +201,11 @@ desktop_menu_event :: proc(d: ^Daemon, ev: ^xlib.XEvent) -> bool {
 	if !menu.is_open(&d.menu) { return false }
 	if !menu.handle_event(&d.menu, ev) { return false }
 	if id, chosen := menu.take_result(&d.menu); chosen {
-		menu_run(d, Menu_Action(id))
+		if id >= AREA_MENU_BASE {
+			menu_run_areas(d, id)
+		} else {
+			menu_run(d, Menu_Action(id))
+		}
 	}
 	if !menu.is_open(&d.menu) { menu_targets_clear(d) }
 	return true
@@ -218,6 +236,19 @@ menu_run :: proc(d: ^Daemon, action: Menu_Action) {
 	case .Trash:
 		trash_cells(d, targets[:])
 	}
+}
+
+// A "Show on" entry: for the items the menu was opened for, as they are now.
+@(private)
+menu_run_areas :: proc(d: ^Daemon, id: int) {
+	l := &d.layer
+	targets := make([dynamic]^Item, context.temp_allocator)
+	for t in d.menu_targets {
+		for &cell in l.cells {
+			if cell.source == t.source && cell.name == t.name { append(&targets, &l.items[cell.entry]) }
+		}
+	}
+	if len(targets) > 0 { areas_menu_run(d, targets[:], id) }
 }
 
 @(private)
@@ -329,7 +360,10 @@ trash_cells :: proc(d: ^Daemon, cells: []int) {
 	for i in cells {
 		it := &d.layer.items[d.layer.cells[i].entry]
 		if it.source != .Folder { continue }
-		if trash_file(it.path) { moved += 1 }
+		if trash_file(it.path) {
+			moved += 1
+			areas_forget(d, it.name)
+		}
 	}
 	if moved > 0 {
 		log.infof("Moved %d item(s) to the trash", moved)

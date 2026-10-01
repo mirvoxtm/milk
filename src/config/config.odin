@@ -25,6 +25,7 @@ BAR_WIDGETS         :: []string{"launcher", "active_window", "workspaces", "medi
                                  "recorder", "network", "bluetooth", "volume", "brightness", "battery", "date", "clock", "settings", "session",
                                  "tasks"}
 DESKTOP_ICON_SORTS  :: []string{"name", "type", "modified"}
+DESKTOP_NEW_ICONS   :: []string{"every-area", "current-area"}
 
 Workspace :: struct {
 	index:     int,
@@ -66,6 +67,7 @@ Desktop_Icon_Options :: struct {
 	show_hidden: bool,   // dot files
 	sort:        string, // name | type | modified: order of icons that have no saved place
 	thumbnails:  bool,   // previews of images instead of their type icon
+	new_icons:   string, // every-area | current-area: where a file that appears in the folder shows
 }
 
 Linux_Options :: struct {
@@ -529,7 +531,7 @@ default_title_bar :: proc() -> Title_Bar_Options {
 }
 
 default_desktop_icons :: proc() -> Desktop_Icon_Options {
-	return {enabled = false, folder = "", show_hidden = false, sort = "name", thumbnails = true}
+	return {enabled = false, folder = "", show_hidden = false, sort = "name", thumbnails = true, new_icons = "every-area"}
 }
 
 // ---------------------------------------------------------------------------
@@ -699,12 +701,13 @@ parse_linux :: proc(l: ^Loader, root: json.Object, out: ^Linux_Options) -> bool 
 	di_defaults := default_desktop_icons()
 	di := get_object(l, section, "desktopIcons", "linux") or_return
 	{
-		reject_unknown(l, di, {"enabled", "folder", "showHidden", "sort", "thumbnails"}, "linux.desktopIcons") or_return
+		reject_unknown(l, di, {"enabled", "folder", "showHidden", "sort", "thumbnails", "newIcons"}, "linux.desktopIcons") or_return
 		out.desktop_icons.enabled = get_bool(l, di, "enabled", "linux.desktopIcons", di_defaults.enabled) or_return
 		out.desktop_icons.folder = get_string(l, di, "folder", "linux.desktopIcons", "", true) or_return
 		out.desktop_icons.show_hidden = get_bool(l, di, "showHidden", "linux.desktopIcons", di_defaults.show_hidden) or_return
 		out.desktop_icons.sort = get_choice(l, di, "sort", "linux.desktopIcons", di_defaults.sort, DESKTOP_ICON_SORTS) or_return
 		out.desktop_icons.thumbnails = get_bool(l, di, "thumbnails", "linux.desktopIcons", di_defaults.thumbnails) or_return
+		out.desktop_icons.new_icons = get_choice(l, di, "newIcons", "linux.desktopIcons", di_defaults.new_icons, DESKTOP_NEW_ICONS) or_return
 	}
 	return true
 }
@@ -1232,7 +1235,7 @@ destroy :: proc(cfg: ^Config) {
 	delete(cfg.linux.wallpaper_mode)
 	delete(cfg.linux.indicator.font); delete(cfg.linux.indicator.position)
 	delete(cfg.linux.shortcuts.mode); delete(cfg.linux.shortcuts.font); delete(cfg.linux.shortcuts.icon_theme); delete(cfg.linux.shortcuts.monitor)
-	delete(cfg.linux.desktop_icons.folder); delete(cfg.linux.desktop_icons.sort)
+	delete(cfg.linux.desktop_icons.folder); delete(cfg.linux.desktop_icons.sort); delete(cfg.linux.desktop_icons.new_icons)
 	b := &cfg.bar
 	delete(b.position); delete(b.monitor); delete(b.override_redirect); delete(b.font); delete(b.icon_font_file); delete(b.icon_font)
 	delete(b.theme.background); delete(b.theme.foreground); delete(b.theme.muted); delete(b.theme.accent)

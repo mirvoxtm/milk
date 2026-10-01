@@ -195,6 +195,7 @@ rename_commit :: proc(d: ^Daemon) {
 	}
 	log.infof("Renamed %s to %s", ed.name, name)
 	place_rename(d, ed.name, name)
+	areas_rename(d, ed.name, name)
 	delete(d.layer.pending_select)
 	d.layer.pending_select = strings.clone(name)
 	rename_close(d)

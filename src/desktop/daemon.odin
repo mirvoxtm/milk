@@ -243,6 +243,7 @@ reload :: proc(d: ^Daemon, cfg: ^config.Config) {
 	d.cfg = cfg
 	ensure_runtime_dirs(d)
 	wallpaper_prune(d)
+	places_reread(d) // DesktopIcons.json may have been edited by hand
 	icons_destroy(&d.icons)
 	icons_init(&d.icons, cfg)
 	if cfg.linux.shortcuts.icon_size != old.linux.shortcuts.icon_size { thumbs_clear(d) }

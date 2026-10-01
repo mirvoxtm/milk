@@ -4,7 +4,10 @@
 //
 //   {"version": 1,
 //    "shortcuts": {"Firefox.desktop": [0, 2]},
-//    "folders": {"/home/me/Desktop": {"notes.txt": [1, 0]}}}
+//    "folders": {"/home/me/Desktop": {"notes.txt": [1, 0]}},
+//    "areas": {...}}
+//
+// ("areas": the areas each icon is kept to, areas.odin).
 //
 // Area shortcuts share one table (Common/ and every area folder), files get
 // one table per desktop folder. An icon without a place takes the first free
@@ -31,6 +34,8 @@ Places :: struct {
 	path:      string,                        // the JSON file (owned)
 	shortcuts: map[string]Place,              // keys owned
 	folders:   map[string]map[string]Place,   // folder → name → place, keys owned
+	area_shortcuts: map[string]Area_Set,          // areas.odin, keys owned
+	area_folders:   map[string]map[string]Area_Set, // folder → name → areas, keys owned
 	save_at:   f64,                           // pending write (tx.now() deadline), 0 = none
 }
 
@@ -39,20 +44,47 @@ places_init :: proc(d: ^Daemon) {
 	p.path = strings.clone(join_path({d.runtime_root, PLACES_FILE}))
 	p.shortcuts = make(map[string]Place)
 	p.folders = make(map[string]map[string]Place)
+	p.area_shortcuts = make(map[string]Area_Set)
+	p.area_folders = make(map[string]map[string]Area_Set)
 	places_load(d)
 }
 
-places_destroy :: proc(d: ^Daemon) {
+// Read DesktopIcons.json again (milk reload: picks up edits made by hand);
+// changes of ours not written yet are written first.
+places_reread :: proc(d: ^Daemon) {
 	p := &d.places
 	if p.save_at > 0 { places_save(d) }
+	places_clear_all(p)
+	places_load(d)
+}
+
+@(private)
+places_clear_all :: proc(p: ^Places) {
 	places_clear_table(&p.shortcuts)
-	delete(p.shortcuts)
 	for dir, &table in p.folders {
 		delete(dir)
 		places_clear_table(&table)
 		delete(table)
 	}
+	clear(&p.folders)
+	for key in p.area_shortcuts { delete(key) }
+	clear(&p.area_shortcuts)
+	for dir, &table in p.area_folders {
+		delete(dir)
+		for key in table { delete(key) }
+		delete(table)
+	}
+	clear(&p.area_folders)
+}
+
+places_destroy :: proc(d: ^Daemon) {
+	p := &d.places
+	if p.save_at > 0 { places_save(d) }
+	places_clear_all(p)
+	delete(p.shortcuts)
 	delete(p.folders)
+	delete(p.area_shortcuts)
+	delete(p.area_folders)
 	delete(p.path)
 	p^ = {}
 }
@@ -214,18 +246,61 @@ places_load :: proc(d: ^Daemon) {
 			p.folders[strings.clone(dir)] = table
 		}
 	}
+	read_areas :: proc(value: json.Value, out: ^map[string]Area_Set) {
+		table, ok := value.(json.Object)
+		if !ok { return }
+		for name, v in table {
+			arr, is_arr := v.(json.Array)
+			if !is_arr || name == "" || name in out { continue }
+			set: Area_Set
+			for a in arr {
+				if n, is_int := a.(json.Integer); is_int && n >= 1 && n <= 31 { set += {int(n)} }
+			}
+			if set != {} { out[strings.clone(name)] = set }
+		}
+	}
+	if areas, ok := obj["areas"].(json.Object); ok {
+		read_areas(areas["shortcuts"], &p.area_shortcuts)
+		if folders, has := areas["folders"].(json.Object); has {
+			for dir, value in folders {
+				if dir == "" || dir in p.area_folders { continue }
+				table := make(map[string]Area_Set)
+				read_areas(value, &table)
+				p.area_folders[strings.clone(dir)] = table
+			}
+		}
+	}
 }
 
 @(private)
 places_save :: proc(d: ^Daemon) {
 	p := &d.places
 	p.save_at = 0
+	Areas :: struct {
+		shortcuts: map[string][]int,
+		folders:   map[string]map[string][]int,
+	}
 	File :: struct {
 		version:   int,
 		shortcuts: map[string]Place,
 		folders:   map[string]map[string]Place,
+		areas:     Areas,
 	}
-	doc := File{version = 1, shortcuts = p.shortcuts, folders = p.folders}
+	as_list :: proc(set: Area_Set) -> []int {
+		out := make([dynamic]int, context.temp_allocator)
+		for n in set { append(&out, n) }
+		return out[:]
+	}
+	areas := Areas{shortcuts = make(map[string][]int, allocator = context.temp_allocator),
+	               folders = make(map[string]map[string][]int, allocator = context.temp_allocator)}
+	for name, set in p.area_shortcuts { areas.shortcuts[name] = as_list(set) }
+	for dir, table in p.area_folders {
+		if len(table) == 0 { continue }
+		t := make(map[string][]int, allocator = context.temp_allocator)
+		for name, set in table { t[name] = as_list(set) }
+		areas.folders[dir] = t
+	}
+	doc := File{version = 1, shortcuts = p.shortcuts, folders = p.folders, areas = areas}
 	data, merr := json.marshal(doc, {pretty = true, use_spaces = true, spaces = 2, sort_maps_by_key = true}, context.temp_allocator)
 	if merr != nil {
 		log.warnf("Could not encode the icon places: %v", merr)

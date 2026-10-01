@@ -440,6 +440,14 @@ SPANISH := [][2]string{
 	{"Copy paths", "Copiar rutas"},
 	{"Rename…", "Cambiar nombre…"},
 	{"Move to Trash", "Mover a la papelera"},
+	// Desktop icons kept to some areas.
+	{"Show on", "Mostrar en"},
+	{"Area", "Área"},
+	{"Every area", "Todas las áreas"},
+	{"current", "actual"},
+	{"New files appear on", "Los archivos nuevos aparecen en"},
+	{"Per icon: right-click → Show on", "Por icono: clic derecho → Mostrar en"},
+	{"Current area only", "Solo en el área actual"},
 	// The wallpaper theme (matugen).
 	{"Wallpaper", "Fondo de pantalla"},
 	{"Colours of the wallpaper", "Colores del fondo de pantalla"},

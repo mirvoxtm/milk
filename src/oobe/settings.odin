@@ -44,7 +44,7 @@ Control :: enum {
 	// windows.odin
 	Wm_Mode, Wm_Title_Style, Wm_Title_Side, Wm_Title_Align, Wm_Title_Height, Wm_Placement, Wm_Snap_Layouts,
 	Wm_Snap_Distance, Wm_Raise_Focus,
-	Di_Enabled, Di_Shortcut_Mode, Di_Size, Di_Single, Di_Thumbs, Di_Hidden, Di_Sort,
+	Di_Enabled, Di_Shortcut_Mode, Di_Size, Di_Single, Di_Thumbs, Di_Hidden, Di_Sort, Di_New_Icons,
 }
 
 @(private) ANIM_SCALES :: [4]f64{0, 0.5, 1, 1.5}
@@ -89,6 +89,7 @@ Settings :: struct {
 	di_thumbs:      bool,
 	di_hidden:      bool,
 	di_sort:        int, // SORT_NAMES
+	di_new_here:    bool, // linux.desktopIcons.newIcons = "current-area"
 	di_size:        int,
 	di_single:      bool,
 	sc_mode:        int, // SHORTCUT_MODE_NAMES
