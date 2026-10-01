@@ -57,6 +57,7 @@ Action :: enum {
 	Look_Tab, Avatar_Pick, Avatar_Tile, Avatar_Remove, Avatar_Back, // settings → Appearance (avatar.odin)
 	Lock_Now, // settings → lock.odin
 	Sc_Add, Sc_Edit, Sc_Delete, Sc_Capture, Sc_Kind, Sc_App, Sc_Save, Sc_Cancel, Sc_Builtin, Sc_Action,
+	Sc_Default_Edit, Sc_Key_Remove, Sc_Key_Restore, Sc_Restore_All, // milk's own shortcuts (shortcuts.odin)
 	Th_New, Th_Edit, Th_Slot, Th_Variant, Th_Slider, Th_Swatch, Th_Save, Th_Cancel, Th_Delete, Th_Scheme,
 	Bar_Tab, Bar_Preset, Lw_Select, Lw_Move, Lw_Remove, Lw_Add,
 	Language,
@@ -614,7 +615,8 @@ do_action :: proc(w: ^Wizard, action: Action, arg: int) {
 	case .Section, .Step, .Toggle, .Choice, .Text_Field, .Rerun_Wizard, .Open_Config, .Update_Milk, .Fx_Open, .Win_Tab, .Lock_Now,
 	     .Look_Tab, .Avatar_Pick, .Avatar_Tile, .Avatar_Remove, .Avatar_Back:
 		settings_action(w, action, arg)
-	case .Sc_Add, .Sc_Edit, .Sc_Delete, .Sc_Capture, .Sc_Kind, .Sc_App, .Sc_Save, .Sc_Cancel, .Sc_Builtin, .Sc_Action:
+	case .Sc_Add, .Sc_Edit, .Sc_Delete, .Sc_Capture, .Sc_Kind, .Sc_App, .Sc_Save, .Sc_Cancel, .Sc_Builtin, .Sc_Action,
+	     .Sc_Default_Edit, .Sc_Key_Remove, .Sc_Key_Restore, .Sc_Restore_All:
 		shortcuts_action(w, action, arg)
 	case .Th_New, .Th_Edit, .Th_Slot, .Th_Variant, .Th_Slider, .Th_Swatch, .Th_Save, .Th_Cancel, .Th_Delete:
 		themes_action(w, action, arg)

@@ -77,9 +77,10 @@ rows_lock :: proc(w: ^Wizard, cv: ^tx.Canvas, c: tx.Rect, y: ^i32) {
 	label := tr(w, "Bloquear agora", "Lock now")
 	bw := button_width(w, label, .Lock)
 	button(w, cv, {c.x, y^, bw, BUTTON_H}, label, .Tonal, .Lock_Now, 0, .Lock)
-	mod := w.cfg.wm.mod_key == "alt" ? "Alt" : "Super"
-	hint := fmt.tprintf(tr(w, "Atalho: %s+Shift+L. Players de vídeo e navegadores adiam a inatividade enquanto tocam.",
-	                       "Shortcut: %s+Shift+L. Video players and browsers hold idle off while they play."), mod)
+	hint := tr(w, "Players de vídeo e navegadores adiam a inatividade enquanto tocam.", "Video players and browsers hold idle off while they play.")
+	if keys := builtin_label(w, "lock"); keys != "" {
+		hint = fmt.tprintf(tr(w, "Atalho: %s. %s", "Shortcut: %s. %s"), keys, hint)
+	}
 	hx := c.x + bw + 16
 	text(w, w.f_small, hx, y^, BUTTON_H, ellipsize(w, w.f_small, hint, c.x + c.w - hx), mix(th.fg, th.muted, 0.55))
 }

@@ -2,13 +2,15 @@
 // shell command; wm.keys: "super+Up" → a window manager action), an editor
 // that captures a key combination with an active keyboard grab and picks what
 // it does (an installed application, a command, a site/folder or a window
-// action), and the read-only list of milk's built-in shortcuts.
+// action), and milk's own shortcuts (config.DEFAULT_KEYS), whose keys the user
+// can change, add to, turn off and restore (wm.defaultKeys).
 package oobe
 
 import "core:fmt"
 import "core:os"
 import "core:strings"
 import xlib "vendor:x11/xlib"
+import config "../config"
 import desktop "../desktop"
 import tx "../tx"
 
@@ -98,6 +100,10 @@ Shortcut_Editor :: struct {
 	scroll_apps: i32,
 	wm_action:      int, // index into ACTION_CHOICES, -1 = none (kind 3)
 	scroll_actions: i32,
+	// Editing one of milk's shortcuts instead (the capture adds to `keys`).
+	default_open:   bool,
+	default_index:  int,              // into config.DEFAULT_KEYS
+	keys:           [dynamic]string, // its keys, owned
 }
 
 @(private)
@@ -110,70 +116,45 @@ Shortcuts :: struct {
 	rows:          [dynamic]Binding_Row,
 	dirty:         bool, // write wm.bindings on the next save
 	scroll:        i32,
-	show_builtin:  bool,
+	hide_builtin:  bool, // milk's shortcuts folded away
+	overrides:     map[string]string, // wm.defaultKeys (owned): rewritten whole with the bindings
 	ed:            Shortcut_Editor,
 }
 
-// milk's own shortcuts ("mod" = wm.modKey, "#" = the digits 1..9), from the
-// window manager's key table; `mode` 1 = the tiling mode only, 2 = the
-// floating mode only, 0 = both.
+// Whether one of milk's shortcuts exists in the window manager's current mode.
 @(private)
-Builtin :: struct {
-	keys:   string, // specs separated by spaces
-	pt, en: string,
-	mode:   u8,
+builtin_active :: proc(w: ^Wizard, d: config.Default_Key) -> bool {
+	return config.default_key_active(d, w.set.wm_floating)
 }
 
-@(private, rodata)
-BUILTINS := []Builtin{
-	{"mod+Return", "Abrir o terminal", "Open the terminal", 0},
-	{"mod+d mod+p", "Abrir o lançador de aplicativos", "Open the application launcher", 0},
-	{"mod+q mod+shift+c", "Fechar a janela", "Close the window", 0},
-	{"alt+F4", "Fechar a janela", "Close the window", 2},
-	{"alt+Tab alt+shift+Tab", "Alternar entre as janelas", "Switch between windows", 0},
-	{"mod+j mod+k", "Focar a próxima / anterior janela", "Focus the next / previous window", 0},
-	{"mod+shift+Return", "Trocar com a janela mestre", "Swap with the master window", 1},
-	{"mod+h mod+l", "Diminuir / aumentar a área mestre", "Shrink / grow the master area", 1},
-	{"mod+i mod+shift+d", "Mais / menos janelas na área mestre", "More / fewer windows in the master area", 1},
-	{"mod+t mod+f mod+m", "Lado a lado / flutuante / monóculo", "Tile / floating / monocle layout", 1},
-	{"mod+space", "Layout anterior", "Previous layout", 1},
-	{"mod+shift+space", "Alternar janela flutuante", "Toggle floating", 1},
-	{"mod+Up", "Maximizar / restaurar", "Maximize / restore", 2},
-	{"mod+Down", "Restaurar ou minimizar", "Restore or minimize", 2},
-	{"mod+Left mod+Right", "Encaixar na metade esquerda / direita", "Snap to the left / right half", 2},
-	{"mod+h", "Minimizar", "Minimize", 2},
-	{"mod+c", "Centralizar a janela", "Centre the window", 2},
-	{"mod+shift+d", "Mostrar a área de trabalho", "Show the desktop", 2},
-	{"alt+space", "Menu da janela", "Window menu", 2},
-	{"mod+shift+f", "Tela cheia", "Fullscreen", 0},
-	{"mod+#", "Ir para a área 1…9", "Go to area 1…9", 0},
-	{"mod+shift+#", "Mover a janela para a área 1…9", "Move the window to area 1…9", 0},
-	{"mod+ctrl+#", "Mostrar também a área 1…9", "Also show area 1…9", 0},
-	{"mod+ctrl+shift+#", "Pôr a janela também na área 1…9", "Also put the window on area 1…9", 0},
-	{"mod+0 mod+shift+0", "Todas as áreas / janela em todas", "All areas / window on all areas", 0},
-	{"mod+Tab", "Área anterior", "Previous area", 0},
-	{"ctrl+alt+Left ctrl+alt+Right", "Área anterior / próxima", "Previous / next area", 2},
-	{"ctrl+alt+shift+Left ctrl+alt+shift+Right", "Levar a janela para a área anterior / próxima", "Take the window to the previous / next area", 2},
-	{"mod+comma mod+period", "Focar o monitor anterior / próximo", "Focus the previous / next monitor", 0},
-	{"mod+shift+comma mod+shift+period", "Mover a janela de monitor", "Move the window to another monitor", 0},
-	{"mod+v", "Histórico da área de transferência", "Clipboard history", 0},
-	{"mod+n", "Painel de notificações", "Notification panel", 0},
-	{"mod+shift+s", "Capturar uma região da tela", "Screenshot of a region", 0},
-	{"mod+shift+r", "Recarregar milk.json", "Reload milk.json", 0},
-	{"mod+shift+q", "Sair do milk", "Quit milk", 0},
-	{"mod+shift+l XF86ScreenSaver", "Bloquear a tela", "Lock the screen", 0},
-	{"XF86AudioMute XF86AudioLowerVolume XF86AudioRaiseVolume", "Mudo / volume − / volume +", "Mute / volume − / volume +", 0},
-	{"XF86MonBrightnessDown XF86MonBrightnessUp", "Brilho − / +", "Brightness − / +", 0},
+// The keys of one of milk's shortcuts now: the user's (wm.defaultKeys) or milk's.
+@(private)
+builtin_specs :: proc(w: ^Wizard, d: config.Default_Key) -> string {
+	if !w.set.sc.loaded { return config.default_key_specs(&w.cfg.wm, d) }
+	if keys, ok := w.set.sc.overrides[d.id]; ok { return keys }
+	return d.keys
 }
 
-// Whether a built-in shortcut exists in the window manager's current mode.
+// Shortcuts of these modes can be on at the same time.
 @(private)
-builtin_active :: proc(w: ^Wizard, b: Builtin) -> bool {
-	switch b.mode {
-	case 1: return !w.set.wm_floating
-	case 2: return w.set.wm_floating
+modes_overlap :: proc(a, b: u8) -> bool {
+	return a == 0 || b == 0 || a == b
+}
+
+// The keys of one of milk's shortcuts written for people ("Super+Shift+L"),
+// "" when it is off.
+@(private)
+builtin_label :: proc(w: ^Wizard, id: string) -> string {
+	d := config.default_key(id)
+	if d == nil { return "" }
+	fields := strings.fields(builtin_specs(w, d^), context.temp_allocator)
+	if len(fields) == 0 { return "" }
+	b := strings.builder_make(context.temp_allocator)
+	for part, i in strings.split(fields[0], "+", context.temp_allocator) {
+		if i > 0 { strings.write_byte(&b, '+') }
+		strings.write_string(&b, key_label(w, strings.trim_space(part)))
 	}
-	return true
+	return strings.to_string(b)
 }
 
 // ---------------------------------------------------------------------------
@@ -191,6 +172,8 @@ shortcuts_load :: proc(w: ^Wizard) {
 		append(&sc.rows, Binding_Row{strings.clone(spec), strings.clone(action), true})
 	}
 	sort_rows(sc.rows[:])
+	sc.overrides = make(map[string]string)
+	for id, keys in w.cfg.wm.default_keys { sc.overrides[strings.clone(id)] = strings.clone(keys) }
 	load_apps(w)
 	desktop.icons_init(&sc.icons, w.cfg)
 	sc.icons.size = 24
@@ -313,7 +296,11 @@ shortcuts_destroy :: proc(w: ^Wizard) {
 	if sc.loaded { desktop.icons_destroy(&sc.icons) }
 	for r in sc.rows { delete(r.spec); delete(r.command) }
 	delete(sc.rows)
+	for id, keys in sc.overrides { delete(id); delete(keys) }
+	delete(sc.overrides)
 	ed := &sc.ed
+	clear_keys(ed)
+	delete(ed.keys)
 	delete(ed.original)
 	delete(ed.spec)
 	delete(ed.command)
@@ -366,21 +353,46 @@ same_keys :: proc(w: ^Wizard, a, b: string) -> bool {
 	return oka && okb && ma == mb && ka == kb
 }
 
-// The built-in action a spec overrides, if any.
+// Whether `spec` is one of the keys of `pattern` ("mod+#" has mod+1 … mod+9).
+@(private)
+key_covers :: proc(w: ^Wizard, pattern, spec: string) -> bool {
+	if strings.index_byte(pattern, '#') < 0 || strings.index_byte(spec, '#') >= 0 { return same_keys(w, pattern, spec) }
+	for n in 1 ..= 9 {
+		if same_keys(w, config.expand_area(pattern, n), spec) { return true }
+	}
+	return false
+}
+
+// Whether two keys (each may be an area pattern) have a key in common.
+@(private)
+keys_clash :: proc(w: ^Wizard, a, b: string) -> bool {
+	return key_covers(w, a, b) || key_covers(w, b, a)
+}
+
+// The shortcut of milk's that a key of the user's replaces, if any.
 @(private)
 builtin_conflict :: proc(w: ^Wizard, spec: string) -> (action: string, found: bool) {
-	for b in BUILTINS {
-		if !builtin_active(w, b) { continue }
-		for pattern in strings.fields(b.keys, context.temp_allocator) {
-			if strings.index_byte(pattern, '#') >= 0 {
-				for d in 1 ..= 9 {
-					digit := fmt.tprintf("%d", d)
-					candidate, _ := strings.replace_all(pattern, "#", digit, context.temp_allocator)
-					if same_keys(w, candidate, spec) { return tr(w, b.pt, b.en), true }
-				}
-			} else if same_keys(w, pattern, spec) {
-				return tr(w, b.pt, b.en), true
-			}
+	for d in config.DEFAULT_KEYS {
+		if !builtin_active(w, d) { continue }
+		for pattern in strings.fields(builtin_specs(w, d), context.temp_allocator) {
+			if key_covers(w, pattern, spec) { return tr(w, d.pt, d.en), true }
+		}
+	}
+	return "", false
+}
+
+// What else has `spec`, a key of milk's shortcut `self` being edited: a
+// shortcut of the user's (it would win) or another of milk's.
+@(private)
+key_conflict :: proc(w: ^Wizard, self: int, spec: string) -> (label: string, found: bool) {
+	me := config.DEFAULT_KEYS[self]
+	for r in w.set.sc.rows {
+		if keys_clash(w, spec, r.spec) { return tr(w, "um atalho seu", "a shortcut of yours"), true }
+	}
+	for d, i in config.DEFAULT_KEYS {
+		if i == self || !modes_overlap(d.mode, me.mode) { continue }
+		for k in strings.fields(builtin_specs(w, d), context.temp_allocator) {
+			if keys_clash(w, spec, k) { return tr(w, d.pt, d.en), true }
 		}
 	}
 	return "", false
@@ -435,6 +447,16 @@ key_label :: proc(w: ^Wizard, name: string) -> string {
 		return strings.to_upper(name, context.temp_allocator)
 	}
 	return name
+}
+
+// The width draw_chips takes for a spec.
+@(private)
+chips_width :: proc(w: ^Wizard, spec: string) -> i32 {
+	total: i32
+	for part in strings.split(spec, "+", context.temp_allocator) {
+		total += max(text_width(w, w.f_small, key_label(w, strings.trim_space(part))) + 18, 28) + 5
+	}
+	return total
 }
 
 // Key caps for one spec at (x, centre y); returns the x after the last cap.
@@ -505,6 +527,16 @@ capture_key :: proc(w: ^Wizard, ev: ^xlib.XKeyEvent) {
 		capture_stop(w)
 		return
 	}
+	if ed.default_open && strings.index_byte(config.DEFAULT_KEYS[ed.default_index].action, '#') >= 0 {
+		// An area shortcut: the modifiers with a digit stand for all nine keys.
+		if mods == {} || len(name) != 1 || name[0] < '0' || name[0] > '9' {
+			ed.hint = tr(w, "Segure as teclas modificadoras e pressione um número (1…9).", "Hold the modifiers and press a number (1…9).")
+			w.dirty = true
+			return
+		}
+		capture_add(w, format_spec(mods, "#"))
+		return
+	}
 	fkey := len(name) >= 2 && name[0] == 'F' && name[1] >= '0' && name[1] <= '9'
 	if mods == {} && !fkey && !strings.has_prefix(name, "XF86") {
 		ed.hint = tr(w, "Use uma tecla modificadora (Super, Ctrl, Alt ou Shift) junto com a tecla.",
@@ -512,8 +544,26 @@ capture_key :: proc(w: ^Wizard, ev: ^xlib.XKeyEvent) {
 		w.dirty = true
 		return
 	}
+	if ed.default_open {
+		capture_add(w, format_spec(mods, name))
+		return
+	}
 	delete(ed.spec)
 	ed.spec = format_spec(mods, name)
+	ed.hint = ""
+	capture_stop(w)
+}
+
+// Add a captured key to milk's shortcut being edited (once).
+@(private)
+capture_add :: proc(w: ^Wizard, spec: string) {
+	ed := &w.set.sc.ed
+	if key_listed(w, ed.keys[:], spec) {
+		delete(spec)
+		capture_stop(w)
+		return
+	}
+	append(&ed.keys, spec)
 	ed.hint = ""
 	capture_stop(w)
 }
@@ -527,7 +577,8 @@ editor_open :: proc(w: ^Wizard, row: int) {
 	ed := &sc.ed
 	delete(ed.original)
 	delete(ed.spec)
-	ed^ = {command = ed.command, site = ed.site, search = ed.search}
+	clear_keys(ed)
+	ed^ = {command = ed.command, site = ed.site, search = ed.search, keys = ed.keys}
 	clear(&ed.command)
 	clear(&ed.site)
 	clear(&ed.search)
@@ -568,6 +619,7 @@ editor_open :: proc(w: ^Wizard, row: int) {
 editor_close :: proc(w: ^Wizard) {
 	capture_stop(w)
 	w.set.sc.ed.open = false
+	w.set.sc.ed.default_open = false
 	w.focus = .None
 	w.hover = {}
 	w.dirty = true
@@ -640,6 +692,105 @@ delete_row :: proc(w: ^Wizard, row: int) {
 }
 
 @(private)
+clear_keys :: proc(ed: ^Shortcut_Editor) {
+	for k in ed.keys { delete(k) }
+	clear(&ed.keys)
+}
+
+// Edit milk's shortcut `index` (config.DEFAULT_KEYS).
+@(private)
+default_open :: proc(w: ^Wizard, index: int) {
+	sc := &w.set.sc
+	ed := &sc.ed
+	if index < 0 || index >= len(config.DEFAULT_KEYS) { return }
+	editor_open(w, -1)
+	ed.open = false
+	ed.default_open = true
+	ed.default_index = index
+	for spec in strings.fields(builtin_specs(w, config.DEFAULT_KEYS[index]), context.temp_allocator) {
+		append(&ed.keys, strings.clone(spec))
+	}
+}
+
+@(private)
+key_listed :: proc(w: ^Wizard, list: []string, spec: string) -> bool {
+	for k in list { if same_keys(w, k, spec) { return true } }
+	return false
+}
+
+// Whether two lists of keys are the same keys, in any order.
+@(private)
+same_key_list :: proc(w: ^Wizard, a, b: []string) -> bool {
+	if len(a) != len(b) { return false }
+	for x in a { if !key_listed(w, b, x) { return false } }
+	return true
+}
+
+// Give milk's shortcut `d` these keys: milk's own keys drop the override.
+@(private)
+set_builtin_keys :: proc(w: ^Wizard, d: config.Default_Key, keys: []string) {
+	sc := &w.set.sc
+	joined := strings.join(keys, " ") // before the old value goes: `keys` may point into it
+	if d.id in sc.overrides {
+		old_id, old_keys := delete_key(&sc.overrides, d.id)
+		delete(old_id)
+		delete(old_keys)
+	}
+	if same_key_list(w, keys, strings.fields(d.keys, context.temp_allocator)) {
+		delete(joined)
+	} else {
+		sc.overrides[strings.clone(d.id)] = joined
+	}
+	sc.dirty = true
+}
+
+// Save milk's shortcut being edited. The keys it gained leave whatever else
+// had them: milk's other shortcuts (of a mode where both are on) and the
+// user's own.
+@(private)
+default_save :: proc(w: ^Wizard) {
+	sc := &w.set.sc
+	ed := &sc.ed
+	if !ed.default_open { return }
+	me := config.DEFAULT_KEYS[ed.default_index]
+	before := strings.fields(builtin_specs(w, me), context.temp_allocator)
+	gained := make([dynamic]string, context.temp_allocator)
+	for k in ed.keys { if !key_listed(w, before, k) { append(&gained, k) } }
+	taken :: proc(w: ^Wizard, keys: []string, spec: string) -> bool {
+		for k in keys { if key_covers(w, k, spec) { return true } }
+		return false
+	}
+	for d, i in config.DEFAULT_KEYS {
+		if i == ed.default_index || !modes_overlap(d.mode, me.mode) { continue }
+		old := strings.fields(builtin_specs(w, d), context.temp_allocator)
+		kept := make([dynamic]string, context.temp_allocator)
+		for k in old { if !taken(w, gained[:], k) { append(&kept, k) } }
+		if len(kept) != len(old) { set_builtin_keys(w, d, kept[:]) }
+	}
+	for i := len(sc.rows) - 1; i >= 0; i -= 1 {
+		if !taken(w, gained[:], sc.rows[i].spec) { continue }
+		delete(sc.rows[i].spec)
+		delete(sc.rows[i].command)
+		ordered_remove(&sc.rows, i)
+	}
+	set_builtin_keys(w, me, ed.keys[:])
+	editor_close(w)
+	settings_changed(w, .Values)
+}
+
+// Every one of milk's shortcuts back to its keys.
+@(private)
+restore_all :: proc(w: ^Wizard) {
+	sc := &w.set.sc
+	if len(sc.overrides) == 0 { return }
+	for id, keys in sc.overrides { delete(id); delete(keys) }
+	clear(&sc.overrides)
+	sc.dirty = true
+	settings_changed(w, .Values)
+	show_notice(w, tr(w, "Atalhos do milk restaurados", "milk's shortcuts restored"))
+}
+
+@(private)
 shortcuts_action :: proc(w: ^Wizard, action: Action, arg: int) {
 	sc := &w.set.sc
 	#partial switch action {
@@ -653,9 +804,25 @@ shortcuts_action :: proc(w: ^Wizard, action: Action, arg: int) {
 		w.focus = .None
 	case .Sc_Action:  sc.ed.wm_action = arg
 	case .Sc_App:     sc.ed.app = arg
-	case .Sc_Save:    editor_save(w)
+	case .Sc_Save:
+		if sc.ed.default_open { default_save(w) } else { editor_save(w) }
 	case .Sc_Cancel:  editor_close(w)
-	case .Sc_Builtin: sc.show_builtin = !sc.show_builtin
+	case .Sc_Builtin: sc.hide_builtin = !sc.hide_builtin
+	case .Sc_Default_Edit: default_open(w, arg)
+	case .Sc_Key_Remove:
+		ed := &sc.ed
+		if arg >= 0 && arg < len(ed.keys) {
+			delete(ed.keys[arg])
+			ordered_remove(&ed.keys, arg)
+		}
+	case .Sc_Key_Restore:
+		ed := &sc.ed
+		clear_keys(ed)
+		ed.hint = ""
+		for spec in strings.fields(config.DEFAULT_KEYS[ed.default_index].keys, context.temp_allocator) {
+			append(&ed.keys, strings.clone(spec))
+		}
+	case .Sc_Restore_All: restore_all(w)
 	}
 	w.dirty = true
 }
@@ -669,6 +836,8 @@ draw_shortcuts :: proc(w: ^Wizard, cv: ^tx.Canvas, c: tx.Rect) {
 	w.set.sc.icon_budget = 2
 	if w.set.sc.ed.open {
 		draw_shortcut_editor(w, cv, c)
+	} else if w.set.sc.ed.default_open {
+		draw_default_editor(w, cv, c)
 	} else {
 		draw_shortcut_list(w, cv, c)
 	}
@@ -737,34 +906,67 @@ draw_shortcut_list :: proc(w: ^Wizard, cv: ^tx.Canvas, c: tx.Rect) {
 		y += 66
 	}
 
-	// Built-in shortcuts (collapsible).
+	// milk's own shortcuts (collapsible): a click changes their keys.
 	y += 12
 	head := tx.Rect{c.x, y, c.w, 44}
 	if hovered(w, .Sc_Builtin) { fill_rounded(cv, head, 14, th.hover) }
-	icon(w, w.f_icon_small, {head.x + 8, head.y, 22, head.h}, sc.show_builtin ? .Chevron_Down : .Chevron_Right, th.fg, c)
+	icon(w, w.f_icon_small, {head.x + 8, head.y, 22, head.h}, sc.hide_builtin ? .Chevron_Right : .Chevron_Down, th.fg, c)
 	text(w, w.f_h2, head.x + 38, head.y, head.h, tr(w, "Atalhos do milk", "milk's shortcuts"), th.fg, c)
-	hint := tr(w, "Um atalho seu com as mesmas teclas substitui o do milk", "A shortcut of yours with the same keys replaces milk's")
-	hw := text_width(w, w.f_small, hint)
-	if hw < head.w - 260 { text(w, w.f_small, head.x + head.w - 12 - hw, head.y, head.h, hint, th.muted, c) }
 	add_hit(w, head, .Sc_Builtin, 0, c)
+	if !sc.hide_builtin && len(sc.overrides) > 0 {
+		label := tr(w, "Restaurar todos", "Restore all")
+		rw := button_width(w, label, .Arrow_Back_Up)
+		if head.y + 2 + 40 > c.y { button_clipped(w, cv, {head.x + head.w - rw, head.y + 2, rw, 40}, label, .Text, .Sc_Restore_All, 0, .Arrow_Back_Up, c) }
+	} else {
+		hint := tr(w, "Clique em um atalho para trocar as teclas", "Click a shortcut to change its keys")
+		hw := text_width(w, w.f_small, hint)
+		if hw < head.w - 260 { text(w, w.f_small, head.x + head.w - 12 - hw, head.y, head.h, hint, th.muted, c) }
+	}
 	y += 52
-	if sc.show_builtin {
-		for b in BUILTINS {
-			if !builtin_active(w, b) { continue }
-			row := tx.Rect{c.x, y, c.w, 42}
-			x := row.x + 8
-			for spec, k in strings.fields(b.keys, context.temp_allocator) {
-				if k > 0 {
-					text(w, w.f_small, x, row.y, row.h, "/", th.muted, c)
-					x += 12
+	if !sc.hide_builtin {
+		for group in config.Key_Group {
+			first := true
+			for d, i in config.DEFAULT_KEYS {
+				if d.group != group || !builtin_active(w, d) { continue }
+				if first {
+					first = false
+					y += 6
+					text(w, w.f_tiny, c.x + 8, y, 22, key_group_name(w, group), th.muted, c)
+					y += 26
 				}
-				x = draw_chips(w, cv, x, row.y + row.h / 2, spec, c)
+				row := tx.Rect{c.x, y, c.w, 42}
+				hot := hovered(w, .Sc_Default_Edit, i)
+				if hot { fill_rounded(cv, row, 12, th.hover) }
+				x := row.x + 8
+				specs := strings.fields(builtin_specs(w, d), context.temp_allocator)
+				for spec, k in specs {
+					if k > 0 {
+						// The keys that fit, then how many more.
+						if x + 12 + chips_width(w, spec) > row.x + row.w * 58 / 100 {
+							text(w, w.f_small, x + 4, row.y, row.h, fmt.tprintf("+%d", len(specs) - k), th.muted, c)
+							x += 30
+							break
+						}
+						text(w, w.f_small, x, row.y, row.h, "/", th.muted, c)
+						x += 12
+					}
+					x = draw_chips(w, cv, x, row.y + row.h / 2, spec, c)
+				}
+				if len(specs) == 0 { text(w, w.f_body, x + 4, row.y, row.h, tr(w, "Desligado", "Off"), th.muted, c) }
+				dx := max(x + 16, row.x + row.w * 52 / 100)
+				right := row.x + row.w - 44
+				if d.id in sc.overrides {
+					// Changed: an accent dot before what it does.
+					tx.canvas_fill_circle(cv, f32(dx) + 3, f32(row.y + row.h / 2), 3.5, th.accent)
+					dx += 14
+				}
+				desc := tr(w, d.pt, d.en)
+				text(w, w.f_body, dx, row.y, row.h, ellipsize(w, w.f_body, desc, right - dx), mix(th.fg, th.muted, 0.3), c)
+				if hot { icon(w, w.f_icon_small, {right + 6, row.y, 30, row.h}, .Pencil, mix(th.fg, th.muted, 0.3), c) }
+				add_hit(w, row, .Sc_Default_Edit, i, c)
+				tx.canvas_fill_rect(cv, {row.x, row.y + row.h, row.w, 1}, mix(th.bg, th.muted, 0.15))
+				y += 44
 			}
-			desc := tr(w, b.pt, b.en)
-			dx := max(x + 16, row.x + row.w * 52 / 100)
-			text(w, w.f_body, dx, row.y, row.h, ellipsize(w, w.f_body, desc, row.x + row.w - dx), mix(th.fg, th.muted, 0.3), c)
-			tx.canvas_fill_rect(cv, {row.x, row.y + row.h, row.w, 1}, mix(th.bg, th.muted, 0.15))
-			y += 44
 		}
 	}
 	content_h := y + sc.scroll - c.y
@@ -777,6 +979,18 @@ draw_shortcut_list :: proc(w: ^Wizard, cv: ^tx.Canvas, c: tx.Rect) {
 		thumb_y := c.y + 4 + (track - thumb_h) * sc.scroll / max_scroll
 		fill_rounded(cv, {c.x + c.w + 14, thumb_y, 4, thumb_h}, 2, tx.color_with_alpha(th.muted, 150))
 	}
+}
+
+@(private)
+key_group_name :: proc(w: ^Wizard, g: config.Key_Group) -> string {
+	switch g {
+	case .Apps:    return tr(w, "APLICATIVOS E PAINÉIS", "APPS AND PANELS")
+	case .Windows: return tr(w, "JANELAS", "WINDOWS")
+	case .Layout:  return tr(w, "LAYOUT LADO A LADO", "TILING LAYOUT")
+	case .Areas:   return tr(w, "ÁREAS E MONITORES", "AREAS AND MONITORS")
+	case .System:  return tr(w, "SISTEMA", "SYSTEM")
+	}
+	return ""
 }
 
 // A button whose hit area is limited to `clip` (scrolled content).
@@ -881,6 +1095,105 @@ draw_shortcut_editor :: proc(w: ^Wizard, cv: ^tx.Canvas, c: tx.Rect) {
 	cancel := tr(w, "Cancelar", "Cancel")
 	cw := button_width(w, cancel)
 	button(w, cv, {save_r.x - 10 - cw, footer_y, cw, BUTTON_H}, cancel, .Text, .Sc_Cancel)
+}
+
+// Editing one of milk's shortcuts: its keys (each removable), a field that
+// captures one more, and restoring milk's keys.
+@(private)
+draw_default_editor :: proc(w: ^Wizard, cv: ^tx.Canvas, c: tx.Rect) {
+	th := &w.theme
+	ed := &w.set.sc.ed
+	d := config.DEFAULT_KEYS[ed.default_index]
+	areas := strings.index_byte(d.action, '#') >= 0
+	y := c.y
+	text(w, w.f_h2, c.x, y, 34, ellipsize(w, w.f_h2, tr(w, d.pt, d.en), c.w), th.fg)
+	y += 34
+	sub := tr(w, "Atalho do milk", "milk shortcut")
+	switch d.mode {
+	case 1: sub = tr(w, "Atalho do milk, só no modo lado a lado", "milk shortcut, in the tiling mode only")
+	case 2: sub = tr(w, "Atalho do milk, só no modo flutuante", "milk shortcut, in the floating mode only")
+	}
+	text(w, w.f_small, c.x, y, 22, sub, th.muted)
+	y += 40
+
+	text(w, w.f_tiny, c.x, y, 18, tr(w, "TECLAS", "KEYS"), th.muted)
+	y += 24
+	footer_y := c.y + c.h - 44
+	before := strings.fields(builtin_specs(w, d), context.temp_allocator)
+	for k, i in ed.keys {
+		row := tx.Rect{c.x, y, c.w, 50}
+		fill_rounded(cv, row, 14, th.field)
+		cy := row.y + row.h / 2
+		x := draw_chips(w, cv, row.x + 14, cy, k)
+		b := tx.Rect{row.x + row.w - 10 - 34, cy - 17, 34, 34}
+		hot := hovered(w, .Sc_Key_Remove, i)
+		if hot { fill_rounded(cv, b, 17, mix(th.warning, th.bg, 0.8)) }
+		icon(w, w.f_icon_small, b, .X, hot ? th.warning : mix(th.fg, th.muted, 0.3))
+		add_hit(w, b, .Sc_Key_Remove, i)
+		if label, found := key_conflict(w, ed.default_index, k); found {
+			// A key it gains is taken from the other; one it had is shared, as before.
+			gained := !key_listed(w, before, k)
+			nx := x + 14
+			note := gained ? fmt.tprintf(tr(w, "Substitui: %s", "Replaces: %s"), label) : fmt.tprintf(tr(w, "Também em: %s", "Also on: %s"), label)
+			color := gained ? th.warning : th.muted
+			icon(w, w.f_icon_small, {nx, row.y, 20, row.h}, gained ? .Alert : .Info, color)
+			text(w, w.f_small, nx + 24, row.y, row.h, ellipsize(w, w.f_small, note, b.x - 12 - nx - 24), color)
+		}
+		y += 58
+	}
+	if len(ed.keys) == 0 {
+		text(w, w.f_body, c.x + 4, y, 30, tr(w, "Sem teclas: este atalho fica desligado.", "No keys: this shortcut is off."), th.muted)
+		y += 40
+	}
+
+	// One more key (a few at most).
+	if len(ed.keys) < 6 && y + 50 < footer_y - 40 {
+		field := tx.Rect{c.x, y, c.w, 50}
+		hot := hovered(w, .Sc_Capture)
+		fill_rounded(cv, field, 14, ed.capturing ? th.bg : (hot ? mix(th.field, th.hover, 0.5) : th.bg))
+		tx.canvas_stroke_rounded_rect(cv, field, 14, ed.capturing ? 2 : 1, ed.capturing ? th.accent : th.outline)
+		icon(w, w.f_icon_small, {field.x + 14, field.y, 24, field.h}, ed.capturing ? .Keyboard : .Plus, ed.capturing ? th.accent : th.muted)
+		label: string
+		switch {
+		case ed.capturing && areas:
+			label = tr(w, "Pressione os modificadores com um número…  (Esc cancela)", "Press the modifiers with a number…  (Esc cancels)")
+		case ed.capturing:
+			label = tr(w, "Pressione a combinação…  (Esc cancela)", "Press the combination…  (Esc cancels)")
+		case:
+			label = tr(w, "Adicionar uma combinação de teclas", "Add a key combination")
+		}
+		text(w, w.f_body, field.x + 48, field.y, field.h, ellipsize(w, w.f_body, label, field.w - 60), ed.capturing ? th.accent : mix(th.fg, th.muted, 0.3))
+		add_hit(w, field, .Sc_Capture)
+		y += 58
+	}
+	note := ed.hint
+	if note == "" && areas {
+		note = tr(w, "Um atalho de área vale para os números de 1 a 9: Super+Ctrl com 3 vira Super+Ctrl+1…9.",
+		          "An area shortcut works with the numbers 1 to 9: Super+Ctrl with 3 becomes Super+Ctrl+1…9.")
+	}
+	if note != "" {
+		color := ed.hint != "" ? th.warning : th.muted
+		icon(w, w.f_icon_small, {c.x, y, 20, 24}, ed.hint != "" ? .Alert : .Info, color)
+		text(w, w.f_small, c.x + 26, y, 24, ellipsize(w, w.f_small, note, c.w - 26), color)
+	}
+
+	// Footer: restore milk's keys, cancel, save.
+	save := tr(w, "Salvar", "Save")
+	sw := max(button_width(w, save, .Check), 130)
+	save_r := tx.Rect{c.x + c.w - sw, footer_y, sw, BUTTON_H}
+	if !ed.capturing {
+		button(w, cv, save_r, save, .Filled, .Sc_Save, 0, .Check)
+	} else {
+		fill_rounded(cv, save_r, f32(BUTTON_H) / 2, mix(th.surface, th.bg, 0.3))
+		text_centered(w, w.f_h2, save_r, save, th.muted)
+	}
+	cancel := tr(w, "Cancelar", "Cancel")
+	cw := button_width(w, cancel)
+	button(w, cv, {save_r.x - 10 - cw, footer_y, cw, BUTTON_H}, cancel, .Text, .Sc_Cancel)
+	if !same_key_list(w, ed.keys[:], strings.fields(d.keys, context.temp_allocator)) {
+		restore := tr(w, "Restaurar o padrão", "Restore the default")
+		button(w, cv, {c.x, footer_y, button_width(w, restore, .Arrow_Back_Up), BUTTON_H}, restore, .Text, .Sc_Key_Restore, 0, .Arrow_Back_Up)
+	}
 }
 
 @(private)

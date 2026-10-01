@@ -135,6 +135,7 @@
     "borderColor": "#D8CEC3",
     "borderWidth": 0,
     "cornerRadius": 10,
+    "defaultKeys": {},
     "enabled": true,
     "focusColor": "#4A3F35",
     "focusFollowsMouse": true,

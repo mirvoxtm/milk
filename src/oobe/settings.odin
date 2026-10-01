@@ -1108,7 +1108,7 @@ write_edits :: proc(w: ^Wizard) -> bool {
 		json_set(&root, strings.split(key, ".", context.temp_allocator), v)
 	}
 	if w.set.sc.dirty {
-		// wm.bindings and wm.keys are rewritten whole: removed shortcuts must disappear.
+		// wm.bindings, wm.keys and wm.defaultKeys are rewritten whole: removed shortcuts must disappear.
 		bindings := make(json.Object, context.temp_allocator)
 		keys := make(json.Object, context.temp_allocator)
 		for r in w.set.sc.rows {
@@ -1116,6 +1116,9 @@ write_edits :: proc(w: ^Wizard) -> bool {
 		}
 		json_set(&root, {"wm", "bindings"}, bindings)
 		json_set(&root, {"wm", "keys"}, keys)
+		defaults := make(json.Object, context.temp_allocator)
+		for id, specs in w.set.sc.overrides { defaults[id] = json.String(specs) }
+		json_set(&root, {"wm", "defaultKeys"}, defaults)
 	}
 	if w.set.themes_dirty {
 		// Rewritten whole too: renamed and deleted themes must disappear.

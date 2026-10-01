@@ -125,13 +125,22 @@ run_action :: proc(m: ^Manager, spec: string, target: ^Client, ctx: Action_Ctx) 
 	case "view-last":
 		a := Arg{ui = 0}
 		view(m, &a)
-	case "view", "send":
+	case "view-all":
+		a := Arg{ui = max(u32)}
+		view(m, &a)
+	case "send-all":
+		a := Arg{ui = max(u32)}
+		if c != nil && c == m.selmon.sel { tag(m, &a) }
+	case "view", "send", "toggle-view", "toggle-tag":
 		n, _ := strconv.parse_int(arg, 10)
 		if n < 1 || n > m.settings.tag_count { break }
 		a := Arg{ui = u32(1) << u32(n - 1)}
-		if name == "view" {
-			view(m, &a)
-		} else if c != nil && c == m.selmon.sel {
+		switch name {
+		case "view":        view(m, &a)
+		case "toggle-view": toggleview(m, &a)
+		case:
+			if c == nil || c != m.selmon.sel { break }
+			if name == "toggle-tag" { toggletag(m, &a); break }
 			if c.sticky { set_sticky(m, c, false) }
 			tag(m, &a)
 		}
@@ -143,6 +152,19 @@ run_action :: proc(m: ^Manager, spec: string, target: ^Client, ctx: Action_Ctx) 
 		case "monocle": a.lt = .Monocle
 		}
 		setlayout(m, &a)
+	case "layout-last":
+		a := Arg{}
+		setlayout(m, &a)
+	// dwm's tiling keys.
+	case "zoom":
+		a := Arg{}
+		zoom(m, &a)
+	case "master-grow", "master-shrink":
+		a := Arg{f = name == "master-grow" ? 0.05 : -0.05}
+		setmfact(m, &a)
+	case "master-more", "master-fewer":
+		a := Arg{i = name == "master-more" ? 1 : -1}
+		incnmaster(m, &a)
 	case "focus-monitor":
 		a := Arg{i = arg == "prev" ? -1 : 1}
 		focusmon(m, &a)

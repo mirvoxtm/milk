@@ -103,6 +103,7 @@ Settings :: struct {
 	focus_new:           bool,
 	raise_on_focus:      bool,
 	key_actions:         []Key_Action,
+	default_keys:        []Key_Action, // config.DEFAULT_KEYS of the mode, with wm.defaultKeys
 	mouse:               []Mouse_Binding,
 	root_menu:           []config.Menu_Item, // wm.menu (deep copy); empty with has_menu = false: milk's menu
 	has_menu:            bool,
@@ -246,6 +247,33 @@ floating_from_config :: proc(cfg: ^config.Config, s: ^Settings) {
 	}
 	s.key_actions = keys[:]
 
+	// The default keys. The ones the user changed come first: the first key
+	// that matches runs, so Super+3 given to a shortcut beats the area keys.
+	defaults := make([dynamic]Key_Action)
+	for changed in ([]bool{true, false}) {
+		for d in config.DEFAULT_KEYS {
+			if !config.default_key_active(d, s.floating) || (d.id in w.default_keys) != changed { continue }
+			for spec in strings.fields(config.default_key_specs(w, d), context.temp_allocator) {
+				areas := strings.index_byte(spec, '#') >= 0
+				if areas != (strings.index_byte(d.action, '#') >= 0) {
+					log.warnf("wm: ignoring wm.defaultKeys.%s %q: the area shortcuts take \"#\" for the number (\"super+#\"), the others a key", d.id, spec)
+					continue
+				}
+				for n in 1 ..= (areas ? min(s.tag_count, 9) : 1) {
+					one, action := spec, d.action
+					if areas { one, action = config.expand_area(spec, n), config.expand_area(d.action, n) }
+					mod, sym, ok := parse_key_spec(one, s.modkey)
+					if !ok {
+						log.warnf("wm: ignoring wm.defaultKeys.%s %q: expected modifiers and a key name, e.g. \"super+Up\"", d.id, spec)
+						break
+					}
+					append(&defaults, Key_Action{mod = mod, keysym = sym, action = strings.clone(action)})
+				}
+			}
+		}
+	}
+	s.default_keys = defaults[:]
+
 	mouse := make([dynamic]Mouse_Binding)
 	for spec, action in w.mouse {
 		colon := strings.index_byte(spec, ':')
@@ -344,6 +372,8 @@ settings_destroy :: proc(s: ^Settings) {
 	delete(s.title_font)
 	for k in s.key_actions { delete(k.action) }
 	delete(s.key_actions)
+	for k in s.default_keys { delete(k.action) }
+	delete(s.default_keys)
 	for b in s.mouse { delete(b.ctx); delete(b.action) }
 	delete(s.mouse)
 	config.destroy_menu_items(s.root_menu)

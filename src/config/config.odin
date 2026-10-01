@@ -358,9 +358,11 @@ WM_ACTIONS :: []string{
 	"desktop-new-folder", "desktop-arrange", "desktop-open-folder",
 	// Handled by the main loop (night light; volume/brightness with the on-screen pop-up).
 	"night-light", "volume-up", "volume-down", "mute", "brightness-up", "brightness-down",
-	"view", "send", "layout", "focus-monitor", "send-monitor", "exec", "settings",
+	// dwm's keys (the defaults of the tiling mode).
+	"zoom", "master-grow", "master-shrink", "master-more", "master-fewer", "layout-last", "view-all", "send-all",
+	"view", "send", "toggle-view", "toggle-tag", "layout", "focus-monitor", "send-monitor", "exec", "settings",
 }
-ACTIONS_WITH_ARGUMENT :: []string{"view", "send", "layout", "focus-monitor", "send-monitor", "exec"}
+ACTIONS_WITH_ARGUMENT :: []string{"view", "send", "toggle-view", "toggle-tag", "layout", "focus-monitor", "send-monitor", "exec"}
 WM_LAYOUT_NAMES :: []string{"tile", "float", "monocle"}
 
 // Mouse contexts and buttons for wm.mouse: "title:double", "root:right", "client:mod+left"...
@@ -394,7 +396,7 @@ valid_wm_action :: proc(spec: string) -> bool {
 	for a in ACTIONS_WITH_ARGUMENT { if a == name { needs = true; break } }
 	if needs && arg == "" { return false }
 	switch name {
-	case "view", "send":
+	case "view", "send", "toggle-view", "toggle-tag":
 		n, ok := strconv.parse_int(arg, 10)
 		return ok && n >= 1 && n <= 32
 	case "layout":
@@ -462,6 +464,7 @@ WM_Options :: struct {
 	focus_new:           bool,              // new windows get the focus
 	raise_on_focus:      bool,              // focus follows mouse also raises the window
 	keys:                map[string]string, // "super+up" -> built-in action (see WM_ACTIONS)
+	default_keys:        map[string]string, // DEFAULT_KEYS id -> its keys, separated by spaces ("" = off)
 	mouse:               map[string]string, // "title:double" -> action; DEFAULT_MOUSE merged with the user's entries
 	menu:                []Menu_Item,       // root menu (right-click on the desktop)
 	has_menu:            bool,              // false = milk's default menu
@@ -822,8 +825,9 @@ parse_wm :: proc(l: ^Loader, root: json.Object, out: ^WM_Options) -> bool {
 	                            "gaps", "masterFactor", "masterCount", "resizeHints", "focusFollowsMouse", "tagCount",
 	                            "animation", "screenshot", "fileManager", "cornerRadius", "rules", "bindings",
 	                            "mode", "titleBar", "placement", "snapDistance", "snapLayouts", "resizeMargin",
-	                            "focusNew", "raiseOnFocus", "keys", "mouse", "menu"}, "wm") or_return
+	                            "focusNew", "raiseOnFocus", "keys", "defaultKeys", "mouse", "menu"}, "wm") or_return
 	out.keys = make(map[string]string)
+	out.default_keys = make(map[string]string)
 	out.mouse = make(map[string]string)
 	for pair in DEFAULT_MOUSE { out.mouse[strings.clone(pair[0])] = strings.clone(pair[1]) }
 	out.enabled = get_bool(l, section, "enabled", "wm", d.enabled) or_return
@@ -929,6 +933,13 @@ parse_wm :: proc(l: ^Loader, root: json.Object, out: ^WM_Options) -> bool {
 			return fail(l, "wm.keys.%s must be a built-in action (e.g. \"maximize\", \"view 2\", \"exec firefox\").", key)
 		}
 		out.keys[strings.clone(key)] = strings.clone(strings.trim_space(action))
+	}
+	default_keys := get_object(l, section, "defaultKeys", "wm") or_return
+	for id, value in default_keys {
+		specs, is_str := value.(string)
+		if !is_str { return fail(l, "wm.defaultKeys.%s must be a string: its keys separated by spaces (\"\" turns it off).", id) }
+		if default_key(id) == nil { continue } // a shortcut milk no longer has
+		out.default_keys[strings.clone(id)] = strings.clone(strings.join(strings.fields(specs, context.temp_allocator), " ", context.temp_allocator))
 	}
 	mouse := get_object(l, section, "mouse", "wm") or_return
 	for key, value in mouse {
@@ -1328,6 +1339,8 @@ destroy :: proc(cfg: ^Config) {
 	delete(t.active_color); delete(t.inactive_color); delete(t.active_text); delete(t.inactive_text)
 	for k, v in w.keys { delete(k); delete(v) }
 	delete(w.keys)
+	for k, v in w.default_keys { delete(k); delete(v) }
+	delete(w.default_keys)
 	for k, v in w.mouse { delete(k); delete(v) }
 	delete(w.mouse)
 	destroy_menu_items(w.menu)
