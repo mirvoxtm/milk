@@ -72,6 +72,7 @@ commands:
   switch N     ask the window manager to activate area N
   update       pull milk, Spoil and lactase, rebuild them and restart in place
                ("update check" only says whether there is something new)
+  doctor       check the installation: programs, fonts, session, configuration
   lock         lock the screen (asks the running milk; locks by itself when none runs)
   version      print the version
 
@@ -105,6 +106,7 @@ main :: proc() {
 	case "start":            code = cmd_start(&opts)
 	case "restart":          code = cmd_restart(&opts)
 	case "update":           code = cmd_update(&opts)
+	case "doctor":           code = cmd_doctor(&opts)
 	case "stop":             code = cmd_stop(&opts)
 	case "status":           code = cmd_status(&opts)
 	case "reload":           code = cmd_reload(&opts)
