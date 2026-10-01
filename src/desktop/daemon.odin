@@ -52,6 +52,7 @@ Daemon :: struct {
 	places:         Places,         // saved icon places
 	thumbs:         Thumbs,         // picture previews
 	rename:         Rename_Editor,
+	palette:        Palette_State,  // the wallpaper theme's matugen runs
 	menu:           menu.Menu,      // an icon's context menu
 	menu_targets:   [dynamic]Menu_Target,
 	clipboard:      Clipboard_Owner,
@@ -106,6 +107,7 @@ create :: proc(c: ^tx.Connection, cfg: ^config.Config, runtime_root: string) -> 
 	places_init(d)
 	thumbs_init(d)
 	files_init(d)
+	palette_init(d)
 	return d, true
 }
 
@@ -123,6 +125,7 @@ destroy :: proc(d: ^Daemon) {
 	indicator_destroy(d)
 	files_destroy(d)
 	thumbs_destroy(d)
+	palette_destroy(d)
 	places_destroy(d)
 	clipboard_destroy(d)
 	icons_destroy(&d.icons)
@@ -158,6 +161,7 @@ tick :: proc(d: ^Daemon, now: f64) {
 	pointer_tick(d)
 	files_tick(d, now)
 	places_tick(d, now)
+	palette_tick(d, now)
 	if d.screen_change_at > 0 && now >= d.screen_change_at {
 		d.screen_change_at = 0
 		d.area_check_at = 0
@@ -189,7 +193,7 @@ next_timeout :: proc(d: ^Daemon, now: f64) -> f64 {
 	consider(&best, d.screen_change_at, now)
 	consider(&best, d.area_check_at, now)
 	consider(&best, d.bg_refresh_at, now)
-	for t in ([]f64{files_next_timeout(d, now), places_next_timeout(d, now)}) {
+	for t in ([]f64{files_next_timeout(d, now), places_next_timeout(d, now), palette_next_timeout(d, now)}) {
 		if t >= 0 && (best < 0 || t < best) { best = t }
 	}
 	return best
@@ -202,6 +206,7 @@ poll_fds :: proc(d: ^Daemon) -> []i32 {
 	out := make([dynamic]i32, 0, 2, context.temp_allocator)
 	if fd, ok := files_fd(d); ok { append(&out, fd) }
 	if fd, ok := thumbs_fd(d); ok { append(&out, fd) }
+	if d.palette.fd >= 0 { append(&out, i32(d.palette.fd)) }
 	return out[:]
 }
 
@@ -209,6 +214,7 @@ handle_fd :: proc(d: ^Daemon, fd: i32) {
 	context.allocator = d.allocator
 	if f, ok := files_fd(d); ok && f == fd { files_on_notify(d) }
 	if t, ok := thumbs_fd(d); ok && t == fd { thumbs_collect(d) }
+	if d.palette.fd >= 0 && i32(d.palette.fd) == fd { palette_read(d) }
 	tx.flush(d.c)
 }
 
@@ -244,6 +250,17 @@ reload :: proc(d: ^Daemon, cfg: ^config.Config) {
 	} else {
 		start(d)
 	}
+}
+
+// New colours only (the wallpaper theme): take the new configuration without
+// applying the area again. The caller owns `cfg` and destroys the previous one.
+retheme :: proc(d: ^Daemon, cfg: ^config.Config) {
+	context.allocator = d.allocator
+	if cfg == nil { return }
+	menu.close(&d.menu) // its items may borrow from the previous configuration
+	menu_targets_clear(d)
+	d.cfg = cfg
+	indicator_recolor(d)
 }
 
 // Every X window the daemon owns (icon cells, the rubber band, the rename
@@ -284,6 +301,7 @@ switch_area :: proc(d: ^Daemon, index: int) {
 	tx.flush(d.c)
 
 	apply_wallpaper(d, index)
+	palette_update(d, index)
 	apply_shortcuts(d, index)
 	if d.cfg.linux.indicator.enabled && !d.quiet {
 		indicator_show(d, index, ws.name if known else "")

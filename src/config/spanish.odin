@@ -440,4 +440,18 @@ SPANISH := [][2]string{
 	{"Copy paths", "Copiar rutas"},
 	{"Rename…", "Cambiar nombre…"},
 	{"Move to Trash", "Mover a la papelera"},
+	// The wallpaper theme (matugen).
+	{"Wallpaper", "Fondo de pantalla"},
+	{"Colours of the wallpaper", "Colores del fondo de pantalla"},
+	{"Install matugen", "Instala matugen"},
+	{"Colour style", "Estilo de color"},
+	{"Tonal", "Tonal"},
+	{"Content", "Contenido"},
+	{"Expressive", "Expresivo"},
+	{"Faithful", "Fiel"},
+	{"Fruit salad", "Ensalada de frutas"},
+	{"Monochrome", "Monocromo"},
+	{"Neutral", "Neutro"},
+	{"Rainbow", "Arcoíris"},
+	{"Vibrant", "Vibrante"},
 }

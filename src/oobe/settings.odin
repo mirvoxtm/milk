@@ -883,6 +883,7 @@ settings_changed :: proc(w: ^Wizard, change: Change) {
 		name, colors, dark := chosen_theme(w)
 		set_edit(w, "appearance.theme", json.String(name))
 		set_edit(w, "appearance.variant", json.String(dark ? "dark" : "light"))
+		set_edit(w, "appearance.matugenScheme", json.String(config.MATUGEN_SCHEMES[w.pal.scheme]))
 		set_edit(w, "bar.theme.background", json.String(colors.bar.background))
 		set_edit(w, "bar.theme.foreground", json.String(colors.bar.foreground))
 		set_edit(w, "bar.theme.muted", json.String(colors.bar.muted))
@@ -924,6 +925,7 @@ settings_tick :: proc(w: ^Wizard, now: f64) {
 		w.dirty = true
 	}
 	effects_tick(w, now)
+	palette_view_tick(w, now)
 }
 
 @(private)
@@ -937,6 +939,7 @@ settings_timeout :: proc(w: ^Wizard, now: f64) -> f64 {
 		if t < 0 || n < t { t = n }
 	}
 	if ft := effects_timeout(w, now); ft >= 0 && (t < 0 || ft < t) { t = ft }
+	if pt := palette_view_timeout(w, now); pt >= 0 && (t < 0 || pt < t) { t = pt }
 	return t
 }
 

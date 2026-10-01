@@ -405,6 +405,21 @@ reload :: proc(b: ^Bar, cfg: ^config.Config) {
 	menus_after_reload(b)
 }
 
+// New colours only (the wallpaper theme follows the area on screen): the look
+// is rebuilt, the media watcher, the tools found and the geometry stay.
+retheme :: proc(b: ^Bar, cfg: ^config.Config) {
+	if b == nil || cfg == nil { return }
+	context.allocator = b.allocator
+	b.cfg = cfg
+	if !apply_config(b) { log.error("Bar: could not apply the new colours") }
+	if !b.started || b.win == 0 { return }
+	slider_close(b)
+	update_base(b)
+	b.dirty = true
+	settings_after_reload(b)
+	menus_after_reload(b)
+}
+
 window_ids :: proc(b: ^Bar, allocator := context.temp_allocator) -> []xlib.Window {
 	if b == nil || b.win == 0 { return nil }
 	ids := make([]xlib.Window, 1, allocator)

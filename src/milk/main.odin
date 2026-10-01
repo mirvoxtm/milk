@@ -618,6 +618,7 @@ loop :: proc(r: ^Runner) {
 			g_reload = false
 			reload(r)
 		}
+		if desktop.theme_changed(r.daemon) { reload_theme(r) }
 		now := tx.now()
 		compositor_reap(r)
 		if r.manager != nil { wm.tick(r.manager, now) }
@@ -712,9 +713,31 @@ reload :: proc(r: ^Runner) {
 	if r.clips != nil { clip.reload(r.clips, cfg) }
 	apply_keyboard(cfg)
 	write_rofi_theme(cfg)
+	oobe.refresh_wallpaper_theme_files(cfg)
 	compositor_sync(r)
 	config.destroy(old)
 	log.info("Configuration reloaded")
+}
+
+// The wallpaper theme published new colours (a moment after the area or its
+// wallpaper changed): everything takes them without applying the area again.
+reload_theme :: proc(r: ^Runner) {
+	cfg, err := config.load(r.opts.config_path)
+	if err != "" {
+		log.errorf("Could not apply the wallpaper colours: %s", err)
+		return
+	}
+	old := r.cfg
+	r.cfg = cfg
+	if r.manager != nil { wm.reload(r.manager, cfg) }
+	desktop.retheme(r.daemon, cfg)
+	if r.bar != nil { bar.retheme(r.bar, cfg) }
+	if r.notes != nil { notify.retheme(r.notes, cfg) }
+	if r.clips != nil { clip.reload(r.clips, cfg) }
+	write_rofi_theme(cfg)
+	oobe.refresh_wallpaper_theme_files(cfg)
+	config.destroy(old)
+	log.info("Wallpaper colours applied")
 }
 
 // ---------------------------------------------------------------------------

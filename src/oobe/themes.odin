@@ -114,6 +114,7 @@ theme_is_custom :: proc(w: ^Wizard) -> bool { return selected_custom(w) != nil }
 @(private)
 current_theme :: proc(w: ^Wizard) -> Theme {
 	if t := selected_custom(w); t != nil { return theme_from_colors(slots_to_colors(t.colors), t.dark) }
+	if wallpaper_selected(w) { return theme_from_colors(wallpaper_colors(w, w.dark), w.dark) }
 	return preset_theme(w.theme_index, w.dark)
 }
 
@@ -121,6 +122,7 @@ current_theme :: proc(w: ^Wizard) -> Theme {
 @(private)
 chosen_theme :: proc(w: ^Wizard) -> (name: string, colors: config.Theme_Colors, dark: bool) {
 	if t := selected_custom(w); t != nil { return t.name, slots_to_colors(t.colors), t.dark }
+	if wallpaper_selected(w) { return config.WALLPAPER_THEME, wallpaper_colors(w, w.dark), w.dark }
 	p := config.THEME_PRESETS[clamp(w.theme_index, 0, preset_count() - 1)]
 	return p.name, w.dark ? p.dark : p.light, w.dark
 }
@@ -128,6 +130,7 @@ chosen_theme :: proc(w: ^Wizard) -> (name: string, colors: config.Theme_Colors, 
 @(private)
 theme_title :: proc(w: ^Wizard) -> string {
 	if t := selected_custom(w); t != nil { return t.name }
+	if wallpaper_selected(w) { return tr(w, "Papel de parede", "Wallpaper") }
 	return config.THEME_PRESETS[clamp(w.theme_index, 0, preset_count() - 1)].title
 }
 
@@ -742,7 +745,7 @@ remove_stale_alacritty :: proc(w: ^Wizard) {
 	for fi in infos {
 		base := os.base(fi.fullpath)
 		if !is_custom_alacritty_file(base) { continue }
-		used := false
+		used := base == custom_alacritty_file(config.WALLPAPER_THEME) // the wallpaper theme's (milk rewrites it)
 		for t in w.customs { if custom_alacritty_file(t.name) == base { used = true; break } }
 		if !used { os.remove(fi.fullpath) }
 	}

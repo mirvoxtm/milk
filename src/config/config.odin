@@ -122,10 +122,11 @@ THEME_VARIANTS :: []string{"light", "dark"}
 
 // Colour theme of the whole suite (bar, panels, toast, borders, terminal).
 Appearance_Options :: struct {
-	theme:           string,         // a THEME_PRESETS name or the name of one of custom_themes
+	theme:           string,         // a THEME_PRESETS name, one of custom_themes or WALLPAPER_THEME (palette.odin)
 	variant:         string,         // light | dark
 	animation_scale: f64,            // multiplies every UI/window animation duration: 0 = off, 0.5 = twice as fast, 1 = normal
 	custom_themes:   []Custom_Theme, // appearance.customThemes, sorted by name
+	matugen_scheme:  string,         // the "wallpaper" theme's matugen scheme (MATUGEN_SCHEMES)
 }
 
 // A theme made by the user in the settings app:
@@ -263,6 +264,7 @@ valid_custom_theme_name :: proc(name: string) -> bool {
 	for p in THEME_PRESETS {
 		if strings.equal_fold(p.name, name) || strings.equal_fold(p.title, name) { return false }
 	}
+	if strings.equal_fold(name, WALLPAPER_THEME) { return false }
 	return true
 }
 
@@ -1025,13 +1027,15 @@ destroy_menu_items :: proc(items: []Menu_Item) {
 @(private)
 parse_extras :: proc(l: ^Loader, root: json.Object, cfg: ^Config) -> bool {
 	ap := get_object(l, root, "appearance", "milk.json") or_return
-	reject_unknown(l, ap, {"theme", "variant", "animationScale", "customThemes"}, "appearance") or_return
+	reject_unknown(l, ap, {"theme", "variant", "animationScale", "customThemes", "matugenScheme"}, "appearance") or_return
 	parse_custom_themes(l, ap, cfg) or_return
 	names := make([dynamic]string, context.temp_allocator)
 	for p in THEME_PRESETS { append(&names, p.name) }
+	append(&names, WALLPAPER_THEME)
 	for t in cfg.appearance.custom_themes { append(&names, t.name) }
 	cfg.appearance.theme = get_choice(l, ap, "theme", "appearance", "milk", names[:]) or_return
 	cfg.appearance.variant = get_choice(l, ap, "variant", "appearance", "light", THEME_VARIANTS) or_return
+	cfg.appearance.matugen_scheme = get_choice(l, ap, "matugenScheme", "appearance", "tonal-spot", MATUGEN_SCHEMES) or_return
 	cfg.appearance.animation_scale = get_number(l, ap, "animationScale", "appearance", 0.7, 0, 3) or_return
 
 	no := get_object(l, root, "notifications", "milk.json") or_return
@@ -1148,6 +1152,7 @@ load :: proc(path: string) -> (cfg: ^Config, err: string) {
 		destroy(cfg)
 		return nil, l.err
 	}
+	if cfg.appearance.theme == WALLPAPER_THEME { apply_wallpaper_palette(cfg) }
 	return cfg, ""
 }
 
@@ -1239,7 +1244,7 @@ destroy :: proc(cfg: ^Config) {
 	delete(b.commands)
 	delete(b.launcher_icon); delete(b.date_format); delete(b.clock_format); delete(b.locale); delete(b.media_idle_text)
 	delete(b.style)
-	delete(cfg.appearance.theme); delete(cfg.appearance.variant); delete(cfg.notifications.position)
+	delete(cfg.appearance.theme); delete(cfg.appearance.variant); delete(cfg.appearance.matugen_scheme); delete(cfg.notifications.position)
 	for &t in cfg.appearance.custom_themes {
 		delete(t.name)
 		destroy_theme_colors(&t.colors)

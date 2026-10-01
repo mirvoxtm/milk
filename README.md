@@ -40,6 +40,8 @@ milk supports changing settings out of the box without having to restart the wm 
 
 as of version 1.1.0, milk now also supports desktop icons with future support planned for icons-per-area.
 
+with matugen, the color scheme can even be picked up by your wallpaper!
+
 ## updating
 updating from a version that kept `milk.json` inside the clone: if `git pull` refuses because of it, run `git checkout -- milk.json && git pull`. 
 
@@ -60,6 +62,7 @@ user simplicity is the absolute priority for milk - I mean, have you ever seen a
 - [Noctalia](https://github.com/noctalia-dev/noctalia-shell), whose bar inspired the layout and look of milk's bar.
 - [MangoWC](https://github.com/DreamMaoMao/mangowc), an inspiration for the animation in the window manager.
 - [picom](https://github.com/yshui/picom), the model for lactase, milk's compositor.
+- [matugen](https://github.com/InioX/matugen), which makes the wallpaper theme's colours.
 - [openbox](http://openbox.org), the model for the floating mode: its title bar letters, window menu,
   desktop menu, per-application rules and bindable actions.
 - [Temenos](https://github.com/EmbargoTM/Temenos), by EmbargoTM, for the original idea of giving each workspace its own identity.

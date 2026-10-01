@@ -111,6 +111,7 @@ write_config :: proc(w: ^Wizard, wallpapers: []string) -> bool {
 	appearance := json_child(root, "appearance")
 	appearance["theme"] = json.String(theme_name)
 	appearance["variant"] = json.String(dark ? "dark" : "light")
+	appearance["matugenScheme"] = json.String(config.MATUGEN_SCHEMES[w.pal.scheme])
 	root["appearance"] = appearance
 
 	bar := json_child(root, "bar")
@@ -237,8 +238,8 @@ update_alacritty :: proc(w: ^Wizard) {
 	data, err := os.read_entire_file(target, context.temp_allocator)
 	if err != nil { return }
 	theme_name, colors, dark := chosen_theme(w)
-	custom_path := "" // the generated file of a custom theme
-	if theme_is_custom(w) {
+	custom_path := "" // the generated file of a custom theme (or of the wallpaper theme)
+	if theme_is_custom(w) || wallpaper_selected(w) {
 		p, ok := write_custom_alacritty(theme_name, colors, dark)
 		if !ok { return }
 		custom_path = p
@@ -316,13 +317,25 @@ is_theme_file :: proc(name: string) -> bool {
 	return false
 }
 
-// contrib/alacritty next to the milk.json in use (the clone), when it exists.
+// contrib/alacritty of the milk clone: the one this program runs from
+// (<clone>/bin/milk), else the one the session recorded (milk.json now lives
+// in ~/.config/milk, next to that record), else next to milk.json (the old layout).
 @(private)
 contrib_theme_dir :: proc(w: ^Wizard) -> string {
-	dir := join_path({filepath.dir(w.config_path), "contrib", "alacritty"})
-	abs, err := filepath.abs(dir, context.temp_allocator)
-	if err == nil { dir = abs }
-	return os.is_directory(dir) ? dir : ""
+	candidates := make([dynamic]string, context.temp_allocator)
+	if exe, err := os.get_executable_path(context.temp_allocator); err == nil {
+		append(&candidates, join_path({filepath.dir(filepath.dir(exe)), "contrib", "alacritty"}))
+	}
+	if data, err := os.read_entire_file(join_path({filepath.dir(w.config_path), "location"}), context.temp_allocator); err == nil {
+		append(&candidates, join_path({strings.trim_space(string(data)), "contrib", "alacritty"}))
+	}
+	append(&candidates, join_path({filepath.dir(w.config_path), "contrib", "alacritty"}))
+	for dir in candidates {
+		abs, err := filepath.abs(dir, context.temp_allocator)
+		path := err == nil ? abs : dir
+		if os.is_directory(path) { return path }
+	}
+	return ""
 }
 
 // milk.json requires name, folder and wallpaper for every workspace: create

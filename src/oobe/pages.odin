@@ -84,14 +84,18 @@ draw_theme_page :: proc(w: ^Wizard, cv: ^tx.Canvas, area: tx.Rect) {
 	          w.dark ? 1 : 0, .Variant)
 
 	gap: i32 = 24
-	n := i32(len(config.THEME_PRESETS))
+	n := i32(len(config.THEME_PRESETS)) + 1 // the presets and the wallpaper theme
 	card_w := (c.w - (n - 1) * gap) / n
 	top := c.y + 44 + 28
-	avail := c.y + c.h - top
+	// matugen's schemes under the cards while the wallpaper theme is chosen.
+	pills_h: i32 = wallpaper_selected(w) ? scheme_pills_height(w, c.w) : 0
+	avail := c.y + c.h - top - (pills_h > 0 ? pills_h + 22 : 0)
 	label_h: i32 = 58
 	preview_h := min(card_w * 7 / 10, avail - label_h - 20)
 	card_h := preview_h + 20 + label_h
 	top += max((avail - card_h) / 3, 0)
+	draw_wallpaper_card(w, cv, {c.x + (n - 1) * (card_w + gap), top, card_w, card_h}, preview_h)
+	if pills_h > 0 { draw_scheme_pills(w, cv, {c.x, top + card_h + 22, c.w, pills_h}) }
 	for preset, i in config.THEME_PRESETS {
 		r := tx.Rect{c.x + i32(i) * (card_w + gap), top, card_w, card_h}
 		selected := i == w.theme_index
@@ -108,15 +112,16 @@ draw_theme_page :: proc(w: ^Wizard, cv: ^tx.Canvas, area: tx.Rect) {
 		draw_theme_preview(w, cv, p, &pt)
 		ly := p.y + p.h + 8
 		text(w, w.f_h2, r.x + 18, ly, 26, preset.title, th.fg)
-		text(w, w.f_small, r.x + 18, ly + 24, 20, w.dark ? tr(w, "Variante escura", "Dark variant") : tr(w, "Variante clara", "Light variant"),
-		     mix(th.fg, th.muted, 0.6))
-		// Palette swatches (and the check mark of the chosen theme).
+		sub := w.dark ? tr(w, "Variante escura", "Dark variant") : tr(w, "Variante clara", "Light variant")
+		text(w, w.f_small, r.x + 18, ly + 24, 20, sub, mix(th.fg, th.muted, 0.6))
+		// Palette swatches when they fit next to that (and the check mark of the chosen theme).
 		sx := r.x + r.w - 18 - 7
 		if selected {
 			check_badge(w, cv, r.x + r.w - 18 - 12, ly + 24, 12)
 			sx -= 36
 		}
-		for col in ([]tx.Color{pt.fg, pt.accent, pt.surface, pt.bg}) {
+		swatches := r.x + 18 + text_width(w, w.f_small, sub) + 10 <= sx - 3 * 14 - 9
+		if swatches do for col in ([]tx.Color{pt.fg, pt.accent, pt.surface, pt.bg}) {
 			tx.canvas_fill_circle(cv, f32(sx), f32(ly + 24), 9, th.field)
 			tx.canvas_fill_circle(cv, f32(sx), f32(ly + 24), 7.5, col)
 			tx.canvas_stroke_rounded_rect(cv, {sx - 8, ly + 16, 16, 16}, 8, 1, tx.color_with_alpha(th.muted, 90))
@@ -147,7 +152,7 @@ draw_theme_preview :: proc(w: ^Wizard, cv: ^tx.Canvas, p: tx.Rect, pt: ^Theme) {
 	}
 	clock := "12:30"
 	cw := text_width(w, w.f_small, clock)
-	text(w, w.f_small, bar.x + bar.w - 14 - cw, bar.y, bar.h, clock, pt.fg)
+	if bar.x + bar.w - 14 - cw >= dx + 6 { text(w, w.f_small, bar.x + bar.w - 14 - cw, bar.y, bar.h, clock, pt.fg) }
 
 	// Window.
 	win := tx.Rect{p.x + 22, bar.y + bar.h + 12, p.w - 44, p.y + p.h - 14 - (bar.y + bar.h + 12)}

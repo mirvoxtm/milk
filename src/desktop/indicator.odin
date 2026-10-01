@@ -135,15 +135,9 @@ indicator_show :: proc(d: ^Daemon, index: int, name: string) {
 		ind.start = {x, area.y + area.h} // hidden behind a bottom bar
 	}
 
-	// Paint the pill once: an opaque pill-shaped window never needs a repaint.
-	bg, fg := toast_colors(d)
-	cv := tx.canvas_make(w, h)
-	defer tx.canvas_destroy(&cv)
-	tx.canvas_fill(&cv, bg)
-	pm := tx.canvas_to_pixmap(c, cv)
-	ts := tx.text_surface_make(c, xlib.Drawable(pm))
-	tx.draw_text_centered_v(&ts, font, (w - tx.text_width(c, font, ind.text)) / 2, 0, h, ind.text, fg)
-	tx.text_surface_destroy(&ts)
+	// Paint the pill once: an opaque pill-shaped window never needs a repaint
+	// (only new colours do, indicator_recolor).
+	pm := toast_pixmap(d)
 
 	animated := config.anim_duration(d.cfg, TOAST_ENTER) > 0
 	first := animated ? ind.start : ind.rest
@@ -179,6 +173,32 @@ indicator_show :: proc(d: ^Daemon, index: int, name: string) {
 		ind.deadline = now + d.cfg.linux.indicator.duration
 	}
 	tx.flush(c)
+}
+
+@(private)
+toast_pixmap :: proc(d: ^Daemon) -> xlib.Pixmap {
+	ind := &d.indicator
+	bg, fg := toast_colors(d)
+	cv := tx.canvas_make(ind.w, ind.h)
+	defer tx.canvas_destroy(&cv)
+	tx.canvas_fill(&cv, bg)
+	pm := tx.canvas_to_pixmap(d.c, cv)
+	ts := tx.text_surface_make(d.c, xlib.Drawable(pm))
+	tx.draw_text_centered_v(&ts, ind.font, (ind.w - tx.text_width(d.c, ind.font, ind.text)) / 2, 0, ind.h, ind.text, fg)
+	tx.text_surface_destroy(&ts)
+	return pm
+}
+
+// New colours while the toast is up (the wallpaper theme's palette arrives a
+// moment after the area switch that showed it): paint it again in place.
+indicator_recolor :: proc(d: ^Daemon) {
+	ind := &d.indicator
+	if !ind.visible || ind.window == 0 || ind.font == nil || ind.w <= 0 { return }
+	pm := toast_pixmap(d)
+	tx.set_background(d.c, ind.window, pm)
+	tx.pixmap_free(d.c, ind.pixmap)
+	ind.pixmap = pm
+	tx.flush(d.c)
 }
 
 // The wallpaper changed under the toast: nothing to repaint (it is opaque).

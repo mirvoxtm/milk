@@ -1,6 +1,7 @@
 {
   "appearance": {
     "animationScale": 0.7,
+    "matugenScheme": "tonal-spot",
     "theme": "milk",
     "variant": "light"
   },

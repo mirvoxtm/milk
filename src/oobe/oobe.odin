@@ -55,7 +55,7 @@ Action :: enum {
 	Wm_Choice, Di_Choice, // wizard: tiling/floating, desktop icons
 	Section, Step, Toggle, Choice, Text_Field, Rerun_Wizard, Open_Config, Fx_Open, Win_Tab,
 	Sc_Add, Sc_Edit, Sc_Delete, Sc_Capture, Sc_Kind, Sc_App, Sc_Save, Sc_Cancel, Sc_Builtin, Sc_Action,
-	Th_New, Th_Edit, Th_Slot, Th_Variant, Th_Slider, Th_Swatch, Th_Save, Th_Cancel, Th_Delete,
+	Th_New, Th_Edit, Th_Slot, Th_Variant, Th_Slider, Th_Swatch, Th_Save, Th_Cancel, Th_Delete, Th_Scheme,
 	Bar_Tab, Bar_Preset, Lw_Select, Lw_Move, Lw_Remove, Lw_Add,
 	Language,
 }
@@ -131,7 +131,8 @@ Wizard :: struct {
 	focus:   Field,
 
 	// Choices
-	theme_index:  int,          // THEME_PRESETS index, or len(THEME_PRESETS) + index into customs
+	theme_index:  int,          // THEME_PRESETS index, len(THEME_PRESETS) + index into customs, or WALLPAPER_INDEX
+	pal:          Palette_View, // the wallpaper theme (wallpaper_theme.odin)
 	dark:         bool,
 	customs:      [dynamic]User_Theme, // appearance.customThemes
 	scroll_themes: i32,
@@ -240,7 +241,9 @@ wizard_setup :: proc(w: ^Wizard, c: ^tx.Connection, cfg: ^config.Config, config_
 
 	// Choices start from the current configuration.
 	for p, i in config.THEME_PRESETS { if p.name == cfg.appearance.theme { w.theme_index = i } }
+	if cfg.appearance.theme == config.WALLPAPER_THEME { w.theme_index = WALLPAPER_INDEX }
 	w.dark = cfg.appearance.variant == "dark"
+	palette_view_init(w)
 	themes_load(w)
 	for t, i in w.customs {
 		if t.name == cfg.appearance.theme {
@@ -331,6 +334,7 @@ wizard_destroy :: proc(w: ^Wizard) {
 	keyboard_destroy(w)
 	settings_destroy(w)
 	themes_destroy(w)
+	palette_view_destroy(w)
 	close_fonts(w)
 	tx.canvas_destroy(&w.base)
 	delete(w.hits)
@@ -605,6 +609,10 @@ do_action :: proc(w: ^Wizard, action: Action, arg: int) {
 		shortcuts_action(w, action, arg)
 	case .Th_New, .Th_Edit, .Th_Slot, .Th_Variant, .Th_Slider, .Th_Swatch, .Th_Save, .Th_Cancel, .Th_Delete:
 		themes_action(w, action, arg)
+	case .Th_Scheme:
+		w.pal.scheme = clamp(arg, 0, len(config.MATUGEN_SCHEMES) - 1)
+		w.dirty = true
+		settings_changed(w, .Theme)
 	case .Bar_Tab, .Bar_Preset, .Lw_Select, .Lw_Move, .Lw_Remove, .Lw_Add:
 		layout_action(w, action, arg)
 	}

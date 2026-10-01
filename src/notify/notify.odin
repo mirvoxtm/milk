@@ -216,6 +216,19 @@ reload :: proc(n: ^Notifier, cfg: ^config.Config) {
 	if was_open { panel_show(n) }
 }
 
+// New colours only (the wallpaper theme): popups and the panel stay where
+// they are and are painted again.
+retheme :: proc(n: ^Notifier, cfg: ^config.Config) {
+	if n == nil || cfg == nil { return }
+	context.allocator = n.allocator
+	n.cfg = cfg
+	release_look(n)
+	apply_look(n)
+	for p in n.popups { if p.win != 0 { popup_render(n, p) } }
+	if n.panel.open && n.panel.win != 0 { panel_render(n) }
+	tx.flush(n.c)
+}
+
 toggle_panel :: proc(n: ^Notifier) {
 	if n == nil { return }
 	context.allocator = n.allocator
