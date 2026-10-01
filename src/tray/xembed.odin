@@ -341,7 +341,11 @@ xembed_event :: proc(t: ^Tray, ev: ^xlib.XEvent) -> bool {
 		}
 	case .ReparentNotify:
 		if item := xembed_find(t, ev.xreparent.window); item != nil {
-			if ev.xreparent.parent != item.socket {
+			// Only the copy reported on the icon itself (our StructureNotify):
+			// milk shares one connection, and the window manager's copies (its
+			// frame's or the root's) may describe an older move, e.g. the
+			// release of an icon it had managed until it asked to dock.
+			if ev.xreparent.event == item.win && ev.xreparent.parent != item.socket {
 				// The application took its window back.
 				log.debugf("Tray: the XEmbed icon of %q left the tray", item.title)
 				xlib.SelectInput(c.dpy, item.win, {})

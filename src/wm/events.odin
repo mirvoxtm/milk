@@ -4,7 +4,7 @@
 // on windows that are neither the root nor a managed client are left alone.
 package wm
 
-import "core:fmt"
+import "core:log"
 import xlib "vendor:x11/xlib"
 import tx "../tx"
 
@@ -58,6 +58,17 @@ buttonpress :: proc(m: ^Manager, e: ^xlib.XEvent) -> bool {
 clientmessage :: proc(m: ^Manager, e: ^xlib.XEvent) -> bool {
 	cme := &e.xclient
 	a := &m.atoms
+	// milk tray: an application asks milk's system tray (the bar) to dock a
+	// window it had mapped as a normal one first: let it go before the tray,
+	// which sees this event next, takes it.
+	if cme.message_type == tx.atom(m.c, "_NET_SYSTEM_TRAY_OPCODE") && cme.data.l[1] == 0 {
+		if c := wintoclient(m, xlib.Window(cme.data.l[2])); c != nil {
+			log.debugf("wm: 0x%x asks to dock in the tray; releasing it", c.win)
+			unmanage(m, c, false)
+			arrange(m, nil)
+		}
+		return false // the tray handles the request itself
+	}
 	switch cme.message_type {
 	case a.net_current_desktop:
 		// milk: switch to a desktop (bar dot clicks, `milk switch N`).
@@ -302,22 +313,19 @@ maprequest :: proc(m: ^Manager, e: ^xlib.XEvent) -> bool {
 	return true
 }
 
-// milk tray: an XEmbed tray icon is never managed. It may ask to be mapped
-// right before or after it docks; once docked it is no longer a child of the
-// root (the tray reparented it into the bar), and while a system tray runs
-// a window carrying _XEMBED_INFO is waiting to be docked by it.
+// milk tray: an XEmbed tray icon is never managed. An application asks to
+// dock before mapping its icon, so by the time its map request is handled the
+// tray has reparented the window into the bar: it is no longer a child of
+// the root. (_XEMBED_INFO alone says nothing: Qt puts it on every top-level
+// window.) An icon mapped before its dock request is released when the
+// request comes (clientmessage).
 is_tray_icon :: proc(m: ^Manager, w: xlib.Window) -> bool {
 	root, parent: xlib.Window
 	children: [^]xlib.Window
 	n: u32
-	if xlib.QueryTree(m.dpy, w, &root, &parent, &children, &n) != xlib.Status(0) {
-		if children != nil { xlib.Free(children) }
-		if parent != m.root { return true }
-	}
-	info, has_info := tx.get_property(m.c, w, "_XEMBED_INFO", xlib.Atom(xlib.AnyPropertyType), 2)
-	if !has_info { return false }
-	tx.property_free(info)
-	return xlib.GetSelectionOwner(m.dpy, tx.atom(m.c, fmt.tprintf("_NET_SYSTEM_TRAY_S%d", m.c.screen))) != 0
+	if xlib.QueryTree(m.dpy, w, &root, &parent, &children, &n) == xlib.Status(0) { return false }
+	if children != nil { xlib.Free(children) }
+	return parent != m.root
 }
 
 // Moving the pointer over the root window onto another monitor selects it.
