@@ -79,6 +79,7 @@ Bar :: struct {
 	slider:          Slider_Popup,
 	wifi:            Wifi_Menu,
 	btm:             Bt_Menu,
+	osd:             OSD_Popup, // volume/brightness pop-up of the media keys (osd.odin)
 	small_font:      ^tx.Font, // second lines in the menus
 	popup_wait:      f64,      // seconds until the popups need a tick (-1 = none)
 	click_handler:   Click_Handler,
@@ -197,6 +198,7 @@ destroy :: proc(b: ^Bar) {
 	wifi_destroy(b)
 	bt_close(b)
 	bt_destroy(b)
+	osd_destroy(b)
 	delete(b.config_path)
 	kill_jobs(b)
 	b.media.stream = nil
@@ -409,6 +411,7 @@ reload :: proc(b: ^Bar, cfg: ^config.Config) {
 		return
 	}
 	slider_close(b) // its anchor widget may have moved or gone
+	osd_close(b)    // fonts, position and colours may have changed
 	if b.win == 0 || use_overlay(b) != b.overlay {
 		hide_window(b)
 		show_window(b)
@@ -434,6 +437,7 @@ retheme :: proc(b: ^Bar, cfg: ^config.Config) {
 	context.allocator = b.allocator
 	b.cfg = cfg
 	if !apply_config(b) { log.error("Bar: could not apply the new colours") }
+	if b.osd.phase != .Hidden { osd_draw(b) } // new colours in place
 	if !b.started || b.win == 0 { return }
 	slider_close(b)
 	update_base(b)

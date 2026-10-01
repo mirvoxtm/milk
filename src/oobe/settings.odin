@@ -23,7 +23,7 @@ import tx "../tx"
 @(private) NOTICE_TIME :: 2.2
 
 @(private)
-Section :: enum { Appearance, Wallpapers, Bar, Windows, Desktop, Effects, Shortcuts, Keyboard, Notifications, Clipboard, Areas, About }
+Section :: enum { Appearance, Wallpapers, Bar, Windows, Desktop, Effects, Display, Shortcuts, Keyboard, Notifications, Clipboard, Areas, About }
 
 // What a change touched (decides which keys are written and how soon).
 @(private)
@@ -45,6 +45,8 @@ Control :: enum {
 	Wm_Mode, Wm_Title_Style, Wm_Title_Side, Wm_Title_Align, Wm_Title_Height, Wm_Placement, Wm_Snap_Layouts,
 	Wm_Snap_Distance, Wm_Raise_Focus,
 	Di_Enabled, Di_Shortcut_Mode, Di_Size, Di_Single, Di_Thumbs, Di_Hidden, Di_Sort, Di_New_Icons,
+	// display.odin
+	Nl_Enabled, Nl_Mode, Nl_Transition, Nl_From, Nl_To, Nl_Lat, Nl_Lon, Osd_Position,
 }
 
 @(private) ANIM_SCALES :: [4]f64{0, 0.5, 1, 1.5}
@@ -93,6 +95,7 @@ Settings :: struct {
 	di_size:        int,
 	di_single:      bool,
 	sc_mode:        int, // SHORTCUT_MODE_NAMES
+	disp:           Display_Settings, // Tela: night light and the volume/brightness pop-up (display.odin)
 	fx_poll:        f64,
 	fx_children:    [dynamic]posix.pid_t, // lactase settings apps not reaped yet
 	names:          [dynamic][dynamic]u8,
@@ -178,6 +181,7 @@ settings_load_values :: proc(w: ^Wizard) {
 	s.clip_max = cfg.clipboard.max_items
 	s.fx_enabled = cfg.compositor.enabled
 	windows_load_values(w)
+	display_load_values(w)
 	for n in w.areas {
 		name: [dynamic]u8
 		if ws, ok := cfg.workspaces[n]; ok { append(&name, ..transmute([]u8)ws.name) }
@@ -196,6 +200,7 @@ settings_destroy :: proc(w: ^Wizard) {
 	clear_edits(w)
 	delete(s.edits)
 	shortcuts_destroy(w)
+	display_destroy(w)
 	ted_destroy(w)
 	lay_destroy(w)
 	s^ = {}
@@ -298,6 +303,8 @@ section_info :: proc(w: ^Wizard, s: Section) -> (icon: Icon, title, desc: string
 		return .Layout_Top, tr(w, "Barra", "Bar"), tr(w, "Posição, estilo, tamanho, widgets e formatos de data e hora.", "Position, style, size, widgets and date/time formats.")
 	case .Effects:
 		return .Sparkles, tr(w, "Efeitos", "Effects"), tr(w, "Sombras, animações e transparência com o lactase, o compositor do milk.", "Shadows, animations and transparency with lactase, milk's compositor.")
+	case .Display:
+		return .Sun, tr(w, "Tela", "Display"), tr(w, "Luz noturna e o aviso de volume e brilho.", "Night light and the volume and brightness pop-up.")
 	case .Windows:
 		return .App_Window, tr(w, "Janelas", "Windows"), tr(w, "Lado a lado ou flutuantes, bordas, barra de título e animações.", "Tiling or floating, borders, title bars and animations.")
 	case .Desktop:
@@ -360,6 +367,8 @@ draw_settings :: proc(w: ^Wizard, cv: ^tx.Canvas) {
 		rows_desktop(w, cv, c, &ry)
 	case .Effects:
 		draw_effects_page(w, cv, c)
+	case .Display:
+		draw_display_section(w, cv, c)
 	case .Shortcuts:
 		draw_shortcuts(w, cv, c)
 	case .Keyboard:
@@ -672,7 +681,7 @@ settings_action :: proc(w: ^Wizard, action: Action, arg: int) {
 			s.notif_position = opt
 			set_edit(w, "notifications.position", json.String(opt == 1 ? "bottom-right" : "top-right"))
 		case:
-			if !windows_choice(w, ctrl, opt) { return }
+			if !windows_choice(w, ctrl, opt) && !display_choice(w, ctrl, opt) { return }
 		}
 		settings_changed(w, .Values)
 	case .Win_Tab:
@@ -736,7 +745,7 @@ step_control :: proc(w: ^Wizard, ctrl: Control, dir: int) {
 		s.clip_max = clamp(s.clip_max + 10 * dir, 10, 500)
 		set_edit(w, "clipboard.maxItems", json.Integer(s.clip_max))
 	case:
-		if !windows_step(w, ctrl, dir) { return }
+		if !windows_step(w, ctrl, dir) && !display_step(w, ctrl, dir) { return }
 	}
 	settings_changed(w, .Values)
 }
@@ -764,7 +773,7 @@ toggle_control :: proc(w: ^Wizard, ctrl: Control) {
 		s.fx_enabled = !s.fx_enabled
 		set_edit(w, "compositor.enabled", json.Boolean(s.fx_enabled))
 	case:
-		if !windows_toggle(w, ctrl) { return }
+		if !windows_toggle(w, ctrl) && !display_toggle(w, ctrl) { return }
 	}
 	settings_changed(w, .Values)
 }
@@ -787,6 +796,8 @@ settings_text_buffer :: proc(w: ^Wizard) -> ^[dynamic]u8 {
 	case .Th_Hex:
 		i := s.text_target % 100
 		if i >= 0 && i < len(Theme_Slot) { return &s.ted.hex[Theme_Slot(i)] }
+	case .Nl_From, .Nl_To, .Nl_Lat, .Nl_Lon:
+		return display_text_buffer(w, ctrl)
 	}
 	return nil
 }
@@ -831,6 +842,8 @@ settings_text_edited :: proc(w: ^Wizard) {
 	case .Th_Hex:
 		ted_hex_edited(w, Theme_Slot(clamp(s.text_target % 100, 0, len(Theme_Slot) - 1)))
 		return
+	case .Nl_From, .Nl_To, .Nl_Lat, .Nl_Lon:
+		if !display_text_edited(w, ctrl) { return } // saved once valid
 	case:
 		return // editor fields are saved with the shortcut
 	}

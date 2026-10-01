@@ -14,6 +14,7 @@ import "core:path/filepath"
 import "core:strings"
 import xlib "vendor:x11/xlib"
 import config "../config"
+import nightlight "../nightlight"
 import tx "../tx"
 
 @(private) SET_WIDTH   :: 330 // minimum; widened to fit the animation row
@@ -26,7 +27,7 @@ import tx "../tx"
 @(private)
 Settings_Action :: enum {
 	None, Position_Top, Position_Bottom, Style_Full, Style_Floating, Height, Opacity, Mode_Tiling, Mode_Floating, Gaps, Border, Master,
-	Anim_Off, Anim_Fast, Anim_Normal, Indicator, All_Settings, Edit,
+	Anim_Off, Anim_Fast, Anim_Normal, Indicator, Night_Light, All_Settings, Edit,
 }
 
 @(private)
@@ -80,7 +81,7 @@ tr :: proc(b: ^Bar, pt, en: string) -> string { return config.tr(b.cfg.bar.langu
 
 // The master area only means something in the tiling mode.
 @(private)
-settings_rows :: proc(b: ^Bar) -> int { return b.cfg.wm.mode == "floating" ? 9 : 10 }
+settings_rows :: proc(b: ^Bar) -> int { return b.cfg.wm.mode == "floating" ? 10 : 11 }
 
 @(private)
 anim_labels :: proc(b: ^Bar) -> [3]string {
@@ -194,6 +195,8 @@ settings_apply :: proc(b: ^Bar, action: Settings_Action, dir: int) {
 	case .Anim_Normal:     settings_write(b, {"appearance", "animationScale"}, json.Float(ANIM_SCALES[2]))
 	case .Indicator:
 		settings_write(b, {"linux", "indicator", "enabled"}, json.Boolean(!cfg.linux.indicator.enabled))
+	case .Night_Light:
+		settings_write(b, {"nightLight", "enabled"}, json.Boolean(!cfg.night_light.enabled))
 	case .All_Settings:
 		settings_close(b)
 		exe, err := os.get_executable_path(context.temp_allocator)
@@ -256,6 +259,20 @@ settings_write :: proc(b: ^Bar, path: []string, value: json.Value) {
 	}
 	log.infof("Bar settings: %s = %v", strings.join(path, ".", context.temp_allocator), value)
 	b.reload_flag = true
+}
+
+// When the night light warms the screen: "Always", or tonight's hours
+// ("18:02–05:41" from the sun at the configured place, else from → to).
+@(private)
+night_light_status :: proc(b: ^Bar) -> string {
+	o := &b.cfg.night_light
+	if o.mode == "always" { return tr(b, "Sempre", "Always") }
+	s := nightlight.schedule_from(o)
+	if !s.sun { return fmt.tprintf("%s–%s", config.format_clock_time(o.from), config.format_clock_time(o.to)) }
+	_, nanos := local_time()
+	start, end, ok := nightlight.next_night(s, f64(nanos) / 1e9)
+	if !ok { return "" }
+	return fmt.tprintf("%s–%s", config.format_clock_time(nightlight.local_minutes(start)), config.format_clock_time(nightlight.local_minutes(end)))
 }
 
 // ---------------------------------------------------------------------------
@@ -365,6 +382,13 @@ settings_draw :: proc(b: ^Bar) {
 	row_y += SET_ROW
 	label(pa, left, row_y, tr(b, "Aviso de área", "Area toast"))
 	toggle(pa, right, row_y, cfg.linux.indicator.enabled, .Indicator)
+	row_y += SET_ROW
+	// Night light: its hours (or "Always") in grey before the switch.
+	label(pa, left, row_y, tr(b, "Luz noturna", "Night light"))
+	if status := night_light_status(b); status != "" {
+		paint_text(pa, b.font, right - 44 - 12 - tx.text_width(c, b.font, status), row_y, SET_ROW, status, th.muted)
+	}
+	toggle(pa, right, row_y, cfg.night_light.enabled, .Night_Light)
 	row_y += SET_ROW
 
 	// Footer: the full settings app; the raw file as a small text button when it fits.

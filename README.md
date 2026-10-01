@@ -49,6 +49,8 @@ every area keeps its own wallpaper, colours and icons. right-click a desktop ico
 ## everything a session needs
 
 - a **system tray** in the bar, for both kinds of tray icons (add "system tray" in settings → bar → widgets if your bar is older than it).
+- **night light**: warmer colours at night, from sunset or at the hours you choose. settings → display, or the quick settings.
+- a **pop-up** for the volume and brightness keys.
 
 ## updating
 updating from a version that kept `milk.json` inside the clone: if `git pull` refuses because of it, run `git checkout -- milk.json && git pull`. 

@@ -337,6 +337,8 @@ WM_ACTIONS :: []string{
 	"view-next", "view-prev", "view-last", "send-next", "send-prev", "terminal", "launcher", "files",
 	"screenshot", "clipboard", "notifications", "reload", "quit",
 	"desktop-new-folder", "desktop-arrange", "desktop-open-folder",
+	// Handled by the main loop (night light; volume/brightness with the on-screen pop-up).
+	"night-light", "volume-up", "volume-down", "mute", "brightness-up", "brightness-down",
 	"view", "send", "layout", "focus-monitor", "send-monitor", "exec", "settings",
 }
 ACTIONS_WITH_ARGUMENT :: []string{"view", "send", "layout", "focus-monitor", "send-monitor", "exec"}
@@ -458,6 +460,8 @@ Config :: struct {
 	clipboard:     Clipboard_Options,
 	keyboard:      Keyboard_Options,
 	compositor:    Compositor_Options,
+	night_light:   Night_Light_Options, // nightLight (nightlight.odin)
+	osd:           OSD_Options,         // osd: the volume/brightness pop-up
 	allocator:  runtime_allocator,
 }
 
@@ -1225,6 +1229,7 @@ parse_root :: proc(l: ^Loader, root: json.Object, cfg: ^Config) -> bool {
 	parse_bar(l, root, &cfg.bar) or_return
 	parse_wm(l, root, &cfg.wm) or_return
 	parse_extras(l, root, cfg) or_return
+	parse_night_light_osd(l, root, cfg) or_return // nightlight.odin
 	return true
 }
 
@@ -1271,5 +1276,6 @@ destroy :: proc(cfg: ^Config) {
 	for k, v in w.mouse { delete(k); delete(v) }
 	delete(w.mouse)
 	destroy_menu_items(w.menu)
+	destroy_night_light_osd(cfg) // nightlight.odin
 	free(cfg)
 }

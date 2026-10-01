@@ -3,7 +3,6 @@
 // grabs (with NumLock/CapsLock variants).
 package wm
 
-import "core:fmt"
 import xlib "vendor:x11/xlib"
 
 @(private)
@@ -89,16 +88,15 @@ build_bindings :: proc(m: ^Manager) {
 		act(m, CTRL + ALT + SHIFT, .XK_Right, "send-next")
 	}
 	// Hardware keys (no modifier): XF86AudioMute/LowerVolume/RaiseVolume and
-	// XF86MonBrightnessUp/Down, handled by contrib/milk-keys.
-	media := [?]struct { sym: uint, arg: string }{
+	// XF86MonBrightnessUp/Down run the actions of the same name, which the
+	// main loop hands to the bar (it shows the volume/brightness pop-up; without
+	// a bar it runs contrib/milk-keys). A wm.bindings command for one of
+	// these keys replaces it, as for any other key.
+	media := [?]struct { sym: uint, action: string }{
 		{0x1008FF12, "mute"}, {0x1008FF11, "volume-down"}, {0x1008FF13, "volume-up"},
 		{0x1008FF02, "brightness-up"}, {0x1008FF03, "brightness-down"},
 	}
-	for k in media {
-		cmd := fmt.aprintf("%s %s", s.keys_helper, k.arg)
-		append(&m.owned_cmds, cmd)
-		add_key(m, {}, xlib.KeySym(k.sym), spawn, {cmd = cmd})
-	}
+	for k in media { act(m, {}, xlib.KeySym(k.sym), k.action) }
 
 	// wm.keys and wm.bindings: a user binding replaces a default one with the same keys.
 	replace :: proc(m: ^Manager, mod: xlib.InputMask, sym: xlib.KeySym) {

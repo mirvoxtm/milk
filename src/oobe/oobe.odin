@@ -58,6 +58,7 @@ Action :: enum {
 	Th_New, Th_Edit, Th_Slot, Th_Variant, Th_Slider, Th_Swatch, Th_Save, Th_Cancel, Th_Delete, Th_Scheme,
 	Bar_Tab, Bar_Preset, Lw_Select, Lw_Move, Lw_Remove, Lw_Add,
 	Language,
+	Display_Ui, // Settings → Tela: the temperature slider, the time zone button (display.odin)
 }
 
 @(private) Scroll_Id :: enum { None, Layouts, Variants, Wallpapers, Shortcuts, Apps, Actions, Themes, Zone_Start, Zone_Center, Zone_End, Zone_Avail }
@@ -426,7 +427,10 @@ handle_event :: proc(w: ^Wizard, ev: ^xlib.XEvent) {
 		on_button(w, ev.xbutton.x, ev.xbutton.y, i32(ev.xbutton.button))
 	case .MotionNotify:
 		if ev.xmotion.window != w.win { return }
-		if w.mode == .Settings { theme_drag(w, ev.xmotion.x, .Button1Mask in ev.xmotion.state) }
+		if w.mode == .Settings {
+			theme_drag(w, ev.xmotion.x, .Button1Mask in ev.xmotion.state)
+			display_drag(w, ev.xmotion.x, .Button1Mask in ev.xmotion.state)
+		}
 		on_motion(w, ev.xmotion.x, ev.xmotion.y)
 	case .LeaveNotify:
 		if w.hover.action != .None {
@@ -615,6 +619,8 @@ do_action :: proc(w: ^Wizard, action: Action, arg: int) {
 		settings_changed(w, .Theme)
 	case .Bar_Tab, .Bar_Preset, .Lw_Select, .Lw_Move, .Lw_Remove, .Lw_Add:
 		layout_action(w, action, arg)
+	case .Display_Ui:
+		display_action(w, arg)
 	}
 }
 

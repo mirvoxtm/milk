@@ -159,6 +159,13 @@ run_action :: proc(m: ^Manager, spec: string, target: ^Client, ctx: Action_Ctx) 
 	case "desktop-new-folder":  m.desktop_request = "desktop-new-folder"
 	case "desktop-arrange":     m.desktop_request = "desktop-arrange"
 	case "desktop-open-folder": m.desktop_request = "desktop-open-folder"
+	// milk: done by the main loop (night light, the bar's volume and brightness with the pop-up).
+	case "night-light":     append(&m.system_requests, "night-light")
+	case "volume-up":       append(&m.system_requests, "volume-up")
+	case "volume-down":     append(&m.system_requests, "volume-down")
+	case "mute":            append(&m.system_requests, "mute")
+	case "brightness-up":   append(&m.system_requests, "brightness-up")
+	case "brightness-down": append(&m.system_requests, "brightness-down")
 	case "settings":
 		exe, err := os.get_executable_path(context.temp_allocator)
 		if err != nil { break }
@@ -168,6 +175,13 @@ run_action :: proc(m: ^Manager, spec: string, target: ^Client, ctx: Action_Ctx) 
 	case "reload": m.reload = true
 	case "quit":   m.quit = true
 	}
+}
+
+// The media keys without the main loop's help (no bar to change the volume
+// or the brightness): run contrib/milk-keys as milk used to.
+run_keys_helper :: proc(m: ^Manager, action: string) {
+	if m == nil { return }
+	spawn_command(m, fmt.tprintf("%s %s", m.settings.keys_helper, action))
 }
 
 // The resize direction of the corner of `c` nearest to a root point.

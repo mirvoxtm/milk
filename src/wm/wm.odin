@@ -91,6 +91,7 @@ Manager :: struct {
 	showing_desktop: bool,
 	desktop_hidden:  [dynamic]xlib.Window, // minimized by "show desktop"
 	desktop_request: string, // a root menu action for the desktop icons (static strings)
+	system_requests: [dynamic]string, // milk: night light, volume and brightness actions for the main loop (static strings)
 	cascade_x, cascade_y: i32,            // wm.placement "cascade"
 	snap_preview:    xlib.Window,         // outline of a snap layout while dragging
 	ev_ctx:          Action_Ctx,          // the event that triggers the current binding
@@ -183,6 +184,7 @@ destroy :: proc(m: ^Manager) {
 	decor_destroy(m)
 	delete(m.menu_entries)
 	delete(m.desktop_hidden)
+	delete(m.system_requests)
 	reap_children(m)
 	delete(m.children)
 	delete(m.keys)
@@ -402,6 +404,17 @@ desktop_requested :: proc(m: ^Manager) -> string {
 	req := m.desktop_request
 	m.desktop_request = ""
 	return req
+}
+
+// milk: actions the main loop performs, in the order they were asked for
+// ("night-light", "volume-up", "volume-down", "mute", "brightness-up",
+// "brightness-down"; a held key repeats them). Cleared by the call.
+system_requested :: proc(m: ^Manager, allocator := context.temp_allocator) -> []string {
+	if m == nil || len(m.system_requests) == 0 { return nil }
+	out := make([]string, len(m.system_requests), allocator)
+	copy(out, m.system_requests[:])
+	clear(&m.system_requests)
+	return out
 }
 
 // Mod+Shift+r was pressed (the flag is cleared by this call).

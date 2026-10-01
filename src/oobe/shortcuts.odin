@@ -65,6 +65,12 @@ ACTION_CHOICES := []Action_Choice{
 	{"clipboard", "Histórico da área de transferência", "Clipboard history"},
 	{"notifications", "Painel de notificações", "Notification panel"},
 	{"screenshot", "Capturar uma região da tela", "Screenshot of a region"},
+	{"night-light", "Ligar / desligar a luz noturna", "Night light on / off"},
+	{"volume-up", "Aumentar o volume", "Volume up"},
+	{"volume-down", "Diminuir o volume", "Volume down"},
+	{"mute", "Mudo", "Mute"},
+	{"brightness-up", "Aumentar o brilho", "Brightness up"},
+	{"brightness-down", "Diminuir o brilho", "Brightness down"},
 	{"settings", "Configurações do milk", "milk settings"},
 	{"reload", "Recarregar milk.json", "Reload milk.json"},
 }

@@ -97,6 +97,20 @@
     },
     "wallpaperMode": "fill"
   },
+  "nightLight": {
+    "enabled": false,
+    "from": "20:00",
+    "latitude": null,
+    "longitude": null,
+    "mode": "sunset",
+    "temperature": 4000,
+    "to": "07:00",
+    "transition": 30
+  },
+  "osd": {
+    "enabled": true,
+    "position": "bottom"
+  },
   "paths": {
     "common": "Common",
     "wallpaperCache": "WallpaperCache",

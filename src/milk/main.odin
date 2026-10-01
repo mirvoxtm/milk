@@ -24,6 +24,7 @@ import bar "../bar"
 import clip "../clip"
 import config "../config"
 import desktop "../desktop"
+import nightlight "../nightlight"
 import notify "../notify"
 import oobe "../oobe"
 import tx "../tx"
@@ -407,6 +408,7 @@ Runner :: struct {
 	bar:     ^bar.Bar,
 	notes:   ^notify.Notifier,
 	clips:   ^clip.Clipboard,
+	night:   ^nightlight.Night_Light, // owner of the screen gamma: night light and nightlight.set_dim
 	wake_fd: posix.FD,
 	compositor_on:    bool,                // lactase was asked to run (compositor.enabled)
 	lactase_children: [dynamic]posix.pid_t, // lactase launchers not reaped yet
@@ -554,6 +556,10 @@ run :: proc(opts: ^Options, cfg: ^config.Config) -> int {
 		if cb, cok := clip.create(c, cfg, opts.runtime_root); cok { r.clips = cb }
 	}
 	defer if r.clips != nil { clip.destroy(r.clips) }
+	// The gamma ramps (night light, dimming); destroyed before the X
+	// connection closes, which puts the original ramps back.
+	r.night = nightlight.create(c, cfg)
+	defer nightlight.destroy(r.night, false)
 
 	wake_read, sig_ok := install_signals()
 	if !sig_ok {
@@ -591,6 +597,7 @@ loop :: proc(r: ^Runner) {
 			if r.bar != nil { bar.handle_event(r.bar, &ev) }
 			if r.notes != nil { notify.handle_event(r.notes, &ev) }
 			if r.clips != nil { clip.handle_event(r.clips, &ev) }
+			if r.night != nil { nightlight.handle_event(r.night, &ev) }
 			if g_stop { break }
 		}
 		if r.manager != nil {
@@ -612,6 +619,8 @@ loop :: proc(r: ^Runner) {
 			}
 			// The root menu's entries for the desktop icons.
 			if req := wm.desktop_requested(r.manager); req != "" { desktop.request(r.daemon, req) }
+			// Night light and media keys (volume/brightness with the pop-up).
+			for req in wm.system_requested(r.manager) { system_request(r, req) }
 		}
 		if r.bar != nil && bar.reload_requested(r.bar) { g_reload = true }
 		if g_reload {
@@ -626,6 +635,7 @@ loop :: proc(r: ^Runner) {
 		if r.bar != nil { bar.tick(r.bar, now) }
 		if r.notes != nil { notify.tick(r.notes, now) }
 		if r.clips != nil { clip.tick(r.clips, now) }
+		if r.night != nil { nightlight.tick(r.night, now) }
 		if r.bar != nil && r.notes != nil { bar.set_badge(r.bar, "notifications", notify.unread_count(r.notes)) }
 
 		timeout := desktop.next_timeout(r.daemon, now)
@@ -644,6 +654,10 @@ loop :: proc(r: ^Runner) {
 		if r.clips != nil {
 			ct := clip.next_timeout(r.clips, now)
 			if ct >= 0 && (timeout < 0 || ct < timeout) { timeout = ct }
+		}
+		if r.night != nil {
+			lt := nightlight.next_timeout(r.night, now)
+			if lt >= 0 && (timeout < 0 || lt < timeout) { timeout = lt }
 		}
 
 		// Everything allocated from the temp allocator during this iteration is
@@ -711,12 +725,25 @@ reload :: proc(r: ^Runner) {
 	}
 	if r.notes != nil { notify.reload(r.notes, cfg) }
 	if r.clips != nil { clip.reload(r.clips, cfg) }
+	if r.night != nil { nightlight.reload(r.night, cfg) }
 	apply_keyboard(cfg)
 	write_rofi_theme(cfg)
 	oobe.refresh_wallpaper_theme_files(cfg)
 	compositor_sync(r)
 	config.destroy(old)
 	log.info("Configuration reloaded")
+}
+
+// A window manager action for the main loop: the night light switch, or a
+// media key that the bar performs and shows in its pop-up (without a bar,
+// contrib/milk-keys does it as before).
+system_request :: proc(r: ^Runner, action: string) {
+	switch action {
+	case "night-light":
+		if r.night != nil && nightlight.toggle(r.night, r.opts.config_path) { g_reload = true }
+	case "volume-up", "volume-down", "mute", "brightness-up", "brightness-down":
+		if r.bar == nil || !bar.media_key(r.bar, action) { wm.run_keys_helper(r.manager, action) }
+	}
 }
 
 // The wallpaper theme published new colours (a moment after the area or its
