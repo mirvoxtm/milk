@@ -108,6 +108,7 @@ create :: proc(c: ^tx.Connection, cfg: ^config.Config, runtime_root: string) -> 
 	thumbs_init(d)
 	files_init(d)
 	palette_init(d)
+	wallpaper_init(d)
 	return d, true
 }
 
@@ -126,6 +127,7 @@ destroy :: proc(d: ^Daemon) {
 	files_destroy(d)
 	thumbs_destroy(d)
 	palette_destroy(d)
+	wallpaper_destroy(d)
 	places_destroy(d)
 	clipboard_destroy(d)
 	icons_destroy(&d.icons)
@@ -140,6 +142,7 @@ destroy :: proc(d: ^Daemon) {
 start :: proc(d: ^Daemon) {
 	context.allocator = d.allocator
 	d.started = true
+	wallpaper_prune(d)
 	index, ok := current_desktop_index(d.c)
 	if !ok {
 		d.waiting = true
@@ -162,6 +165,7 @@ tick :: proc(d: ^Daemon, now: f64) {
 	files_tick(d, now)
 	places_tick(d, now)
 	palette_tick(d, now)
+	wallpaper_tick(d, now)
 	if d.screen_change_at > 0 && now >= d.screen_change_at {
 		d.screen_change_at = 0
 		d.area_check_at = 0
@@ -193,20 +197,21 @@ next_timeout :: proc(d: ^Daemon, now: f64) -> f64 {
 	consider(&best, d.screen_change_at, now)
 	consider(&best, d.area_check_at, now)
 	consider(&best, d.bg_refresh_at, now)
-	for t in ([]f64{files_next_timeout(d, now), places_next_timeout(d, now), palette_next_timeout(d, now)}) {
+	for t in ([]f64{files_next_timeout(d, now), places_next_timeout(d, now), palette_next_timeout(d, now), wallpaper_next_timeout(d, now)}) {
 		if t >= 0 && (best < 0 || t < best) { best = t }
 	}
 	return best
 }
 
 // File descriptors to poll for reading besides the X connection: the
-// desktop folder's inotify watch and the thumbnail worker's pipe (temp
-// allocator). Call handle_fd when one is readable.
+// desktop folder's inotify watch, the thumbnail worker's pipe and the output
+// of matugen and feh (temp allocator). Call handle_fd when one is readable.
 poll_fds :: proc(d: ^Daemon) -> []i32 {
 	out := make([dynamic]i32, 0, 2, context.temp_allocator)
 	if fd, ok := files_fd(d); ok { append(&out, fd) }
 	if fd, ok := thumbs_fd(d); ok { append(&out, fd) }
-	if d.palette.fd >= 0 { append(&out, i32(d.palette.fd)) }
+	if d.palette.job.fd >= 0 { append(&out, i32(d.palette.job.fd)) }
+	if d.wallpaper.feh.fd >= 0 { append(&out, i32(d.wallpaper.feh.fd)) }
 	return out[:]
 }
 
@@ -214,7 +219,8 @@ handle_fd :: proc(d: ^Daemon, fd: i32) {
 	context.allocator = d.allocator
 	if f, ok := files_fd(d); ok && f == fd { files_on_notify(d) }
 	if t, ok := thumbs_fd(d); ok && t == fd { thumbs_collect(d) }
-	if d.palette.fd >= 0 && i32(d.palette.fd) == fd { palette_read(d) }
+	if d.palette.job.fd >= 0 && i32(d.palette.job.fd) == fd { palette_read(d) }
+	if d.wallpaper.feh.fd >= 0 && i32(d.wallpaper.feh.fd) == fd { wallpaper_feh_read(d) }
 	tx.flush(d.c)
 }
 
@@ -236,6 +242,7 @@ reload :: proc(d: ^Daemon, cfg: ^config.Config) {
 	indicator_hide(d)
 	d.cfg = cfg
 	ensure_runtime_dirs(d)
+	wallpaper_prune(d)
 	icons_destroy(&d.icons)
 	icons_init(&d.icons, cfg)
 	if cfg.linux.shortcuts.icon_size != old.linux.shortcuts.icon_size { thumbs_clear(d) }
@@ -341,6 +348,7 @@ apply_shortcuts :: proc(d: ^Daemon, index: int) {
 on_screen_change :: proc(d: ^Daemon) {
 	if d.area <= 0 { return }
 	log.debug("Screen geometry changed; re-applying the wallpaper and the icon layout")
+	wallpaper_forget_drawn(d) // drawn for the old size
 	apply_wallpaper(d, d.area)
 	layer_relayout(d)
 	indicator_refresh(d)

@@ -127,7 +127,7 @@ on_root_property :: proc(d: ^Daemon, pe: ^xlib.XPropertyEvent) {
 		if !ok { return } // property deleted (window manager restarting): keep the current state
 		if d.waiting || index != d.area { switch_area(d, index) }
 	case d.atoms.xrootpmap, d.atoms.esetroot:
-		if tx.now() - d.wallpaper.last_applied < OWN_WALLPAPER_WINDOW { return } // our own feh call
+		if wallpaper_own_change(d) { return } // our own feh call or drawn copy
 		d.bg_refresh_at = tx.now() + 0.1
 	case d.atoms.workarea:
 		schedule_area_check(d)

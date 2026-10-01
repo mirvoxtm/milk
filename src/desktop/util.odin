@@ -340,3 +340,127 @@ spawn_detached :: proc(argv: []string, workdir: string) -> (pid: posix.pid_t, ok
 	}
 	return child, true
 }
+
+// A helper program (feh, matugen) run without making the event loop wait:
+// what it writes to the captured stream arrives through a non-blocking pipe
+// (`fd`, polled by the caller, who then calls child_read); stdin and the other
+// stream are /dev/null, so it can never stop to ask a question.
+Child :: struct {
+	pid:      posix.pid_t, // 0 = none
+	fd:       posix.FD,    // the output pipe; -1 once it is closed
+	out:      [dynamic]u8, // what it wrote
+	deadline: f64,         // tx.now() past which the caller gives up on it
+}
+
+Child_Stream :: enum { Stdout, Stderr }
+
+// How often to look for a helper that closed its output but has not exited yet.
+CHILD_REAP_POLL :: 0.02
+
+child_init :: proc(ch: ^Child) {
+	ch.fd = -1
+	ch.out = make([dynamic]u8)
+}
+
+child_destroy :: proc(ch: ^Child) {
+	child_kill(ch)
+	delete(ch.out)
+}
+
+child_running :: proc(ch: ^Child) -> bool { return ch.pid != 0 }
+
+// Start argv (argv[0] a path) capturing `stream`; a running one is killed first.
+child_start :: proc(ch: ^Child, argv: []string, stream: Child_Stream, timeout: f64) -> bool {
+	child_kill(ch)
+	if len(argv) == 0 { return false }
+	fds: [2]posix.FD
+	if posix.pipe(&fds) != .OK { return false }
+	flags := posix.fcntl(fds[0], .GETFL)
+	posix.fcntl(fds[0], .SETFL, flags | posix.O_NONBLOCK)
+	posix.fcntl(fds[0], .SETFD, posix.FD_CLOEXEC)
+	// Everything the child needs is prepared before fork(): after it, the
+	// child only makes async-signal-safe calls.
+	cexe := strings.clone_to_cstring(argv[0], context.temp_allocator)
+	cargs := make([]cstring, len(argv) + 1, context.temp_allocator)
+	for arg, i in argv { cargs[i] = strings.clone_to_cstring(arg, context.temp_allocator) }
+	into: posix.FD = stream == .Stdout ? 1 : 2
+	other: posix.FD = stream == .Stdout ? 2 : 1
+
+	pid := posix.fork()
+	if pid < 0 {
+		posix.close(fds[0])
+		posix.close(fds[1])
+		return false
+	}
+	if pid == 0 {
+		empty: posix.sigset_t
+		posix.sigemptyset(&empty)
+		posix.sigprocmask(.SETMASK, &empty, nil)
+		posix.signal(.SIGPIPE, auto_cast posix.SIG_DFL)
+		null := posix.open("/dev/null", {.RDWR})
+		if null >= 0 {
+			posix.dup2(null, 0)
+			posix.dup2(null, other)
+		}
+		posix.dup2(fds[1], into)
+		for fd in 3 ..< 1024 { posix.close(posix.FD(fd)) }
+		posix.execv(cexe, raw_data(cargs))
+		posix._exit(127)
+	}
+	posix.close(fds[1])
+	ch.pid = pid
+	ch.fd = fds[0]
+	ch.deadline = tx.now() + timeout
+	clear(&ch.out)
+	return true
+}
+
+// Collect what is readable. `done` once the output ended and the process was
+// reaped; `ok` when it exited with status 0. A program that closes its output
+// and keeps running is reaped later by child_poll.
+child_read :: proc(ch: ^Child) -> (done, ok: bool) {
+	if ch.fd < 0 { return child_poll(ch) }
+	buf: [16384]u8
+	for {
+		n := posix.read(ch.fd, &buf[0], len(buf))
+		if n > 0 {
+			append(&ch.out, ..buf[:n])
+			continue
+		}
+		if n < 0 && posix.errno() == .EINTR { continue }
+		if n < 0 && (posix.errno() == .EAGAIN || posix.errno() == .EWOULDBLOCK) { return false, false }
+		break // end of output
+	}
+	posix.close(ch.fd)
+	ch.fd = -1
+	return child_poll(ch)
+}
+
+// Reap the process if it has exited (never blocks).
+child_poll :: proc(ch: ^Child) -> (done, ok: bool) {
+	if ch.pid == 0 { return true, false }
+	status: i32
+	r := posix.waitpid(ch.pid, &status, {.NOHANG})
+	if r == 0 { return false, false } // still running
+	if r < 0 && posix.errno() == .EINTR { return false, false }
+	ch.pid = 0
+	if ch.fd >= 0 {
+		posix.close(ch.fd)
+		ch.fd = -1
+	}
+	return true, r > 0 && posix.WIFEXITED(status) && posix.WEXITSTATUS(status) == 0
+}
+
+// Stop it at once (it is reaped here).
+child_kill :: proc(ch: ^Child) {
+	if ch.fd >= 0 {
+		posix.close(ch.fd)
+		ch.fd = -1
+	}
+	if ch.pid != 0 {
+		posix.kill(ch.pid, .SIGKILL)
+		status: i32
+		for posix.waitpid(ch.pid, &status, {}) < 0 && posix.errno() == .EINTR {}
+		ch.pid = 0
+	}
+}

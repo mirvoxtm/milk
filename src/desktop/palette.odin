@@ -18,19 +18,14 @@ import "core:hash"
 import "core:log"
 import "core:os"
 import "core:strings"
-import "core:sys/posix"
 import "core:time"
 import config "../config"
-import tx "../tx"
 
 @(private)
 MATUGEN_TIMEOUT :: 30.0
 
 Palette_State :: struct {
-	pid:          posix.pid_t, // the running matugen, 0 = none
-	fd:           posix.FD,    // its stdout (non-blocking), -1 = none
-	out:          [dynamic]u8,
-	deadline:     f64,
+	job:          Child,  // the running matugen (its stdout)
 	plain:        bool,   // the running call is the fallback without the newer options
 	source:       string, // heap: the image of the running call
 	scheme:       string, // heap
@@ -42,14 +37,13 @@ Palette_State :: struct {
 }
 
 palette_init :: proc(d: ^Daemon) {
-	d.palette.fd = -1
-	d.palette.out = make([dynamic]u8)
+	child_init(&d.palette.job)
 }
 
 palette_destroy :: proc(d: ^Daemon) {
 	p := &d.palette
 	palette_stop(d)
-	delete(p.out)
+	child_destroy(&p.job)
 	delete(p.current)
 }
 
@@ -66,12 +60,12 @@ palette_update :: proc(d: ^Daemon, index: int) {
 	p := &d.palette
 	if d.cfg.appearance.theme != config.WALLPAPER_THEME {
 		// Another theme: forget the last palette, so coming back publishes one again.
-		if p.pid != 0 { palette_stop(d) }
+		if child_running(&p.job) { palette_stop(d) }
 		delete(p.current)
 		p.current = ""
 		return
 	}
-	if p.pid != 0 {
+	if child_running(&p.job) {
 		p.again = true
 		return
 	}
@@ -128,73 +122,29 @@ palette_start :: proc(d: ^Daemon, source, scheme, key: string, plain: bool) {
 	argv := make([dynamic]string, context.temp_allocator)
 	append(&argv, exe, "image", source, "--json", "hex", "--dry-run", "-q", "-t", fmt.tprintf("scheme-%s", scheme))
 	if !plain { append(&argv, "--source-color-index", "0", "-c", palette_matugen_config()) }
-
-	fds: [2]posix.FD
-	if posix.pipe(&fds) != .OK { return }
-	flags := posix.fcntl(fds[0], .GETFL)
-	posix.fcntl(fds[0], .SETFL, flags | posix.O_NONBLOCK)
-	posix.fcntl(fds[0], .SETFD, posix.FD_CLOEXEC)
-	cexe := strings.clone_to_cstring(exe, context.temp_allocator)
-	cargs := make([]cstring, len(argv) + 1, context.temp_allocator)
-	for arg, i in argv { cargs[i] = strings.clone_to_cstring(arg, context.temp_allocator) }
-
-	child := posix.fork()
-	if child < 0 {
-		posix.close(fds[0])
-		posix.close(fds[1])
-		return
-	}
-	if child == 0 {
-		// Only async-signal-safe calls after fork().
-		empty: posix.sigset_t
-		posix.sigemptyset(&empty)
-		posix.sigprocmask(.SETMASK, &empty, nil)
-		null := posix.open("/dev/null", {.RDWR})
-		if null >= 0 {
-			posix.dup2(null, 0) // never a terminal: matugen must not ask anything
-			posix.dup2(null, 2)
-		}
-		posix.dup2(fds[1], 1)
-		for fd in 3 ..< 1024 { posix.close(posix.FD(fd)) }
-		posix.execv(cexe, raw_data(cargs))
-		posix._exit(127)
-	}
-	posix.close(fds[1])
-	p.pid = child
-	p.fd = fds[0]
+	// stdin is /dev/null, never a terminal: matugen must not ask anything.
+	if !child_start(&p.job, argv[:], .Stdout, MATUGEN_TIMEOUT) { return }
 	p.plain = plain
-	p.deadline = tx.now() + MATUGEN_TIMEOUT
-	clear(&p.out)
 	if p.source != source { delete(p.source); p.source = strings.clone(source) }
 	if p.scheme != scheme { delete(p.scheme); p.scheme = strings.clone(scheme) }
 	if p.key != key { delete(p.key); p.key = strings.clone(key) }
 	log.debugf("matugen: colours of %s (%s)", source, scheme)
 }
 
-// matugen's stdout is readable.
+// matugen's stdout is readable (or it may have exited: palette_tick).
 @(private)
 palette_read :: proc(d: ^Daemon) {
+	done, exited_ok := child_read(&d.palette.job)
+	if done { palette_finished(d, exited_ok) }
+}
+
+@(private)
+palette_finished :: proc(d: ^Daemon, exited_ok: bool) {
 	p := &d.palette
-	buf: [16384]u8
-	for {
-		n := posix.read(p.fd, &buf[0], len(buf))
-		if n > 0 {
-			append(&p.out, ..buf[:n])
-			continue
-		}
-		if n < 0 && (posix.errno() == .EAGAIN || posix.errno() == .EWOULDBLOCK) { return }
-		if n < 0 && posix.errno() == .EINTR { continue }
-		break // end of output
-	}
-	posix.close(p.fd)
-	p.fd = -1
-	status: i32
-	for posix.waitpid(p.pid, &status, {}) < 0 && posix.errno() == .EINTR {}
-	p.pid = 0
 	pal: config.Wallpaper_Palette
 	ok := false
-	if posix.WIFEXITED(status) && posix.WEXITSTATUS(status) == 0 {
-		pal, ok = config.palette_from_matugen(p.out[:], p.source, p.scheme)
+	if exited_ok {
+		pal, ok = config.palette_from_matugen(p.job.out[:], p.source, p.scheme)
 	}
 	if ok {
 		defer config.destroy_wallpaper_palette(&pal)
@@ -244,16 +194,7 @@ palette_publish :: proc(d: ^Daemon, pal: config.Wallpaper_Palette, key: string) 
 @(private)
 palette_stop :: proc(d: ^Daemon) {
 	p := &d.palette
-	if p.fd >= 0 {
-		posix.close(p.fd)
-		p.fd = -1
-	}
-	if p.pid != 0 {
-		posix.kill(p.pid, .SIGKILL)
-		status: i32
-		for posix.waitpid(p.pid, &status, {}) < 0 && posix.errno() == .EINTR {}
-		p.pid = 0
-	}
+	child_kill(&p.job)
 	p.again = false
 	delete(p.source); p.source = ""
 	delete(p.scheme); p.scheme = ""
@@ -264,7 +205,13 @@ palette_stop :: proc(d: ^Daemon) {
 @(private)
 palette_tick :: proc(d: ^Daemon, now: f64) {
 	p := &d.palette
-	if p.pid == 0 || now < p.deadline { return }
+	if !child_running(&p.job) { return }
+	if p.job.fd < 0 {
+		// Its output ended before it exited.
+		if done, ok := child_poll(&p.job); done { palette_finished(d, ok) }
+		return
+	}
+	if now < p.job.deadline { return }
 	log.warnf("matugen did not finish within %.0f s; keeping the current colours", MATUGEN_TIMEOUT)
 	key := strings.clone(p.key, context.temp_allocator)
 	palette_stop(d)
@@ -275,6 +222,8 @@ palette_tick :: proc(d: ^Daemon, now: f64) {
 
 @(private)
 palette_next_timeout :: proc(d: ^Daemon, now: f64) -> f64 {
-	if d.palette.pid == 0 { return -1 }
-	return max(d.palette.deadline - now, 0)
+	job := &d.palette.job
+	if !child_running(job) { return -1 }
+	if job.fd < 0 { return CHILD_REAP_POLL }
+	return max(job.deadline - now, 0)
 }

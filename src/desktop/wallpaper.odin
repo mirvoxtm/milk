@@ -1,31 +1,77 @@
 // Per-area wallpapers (Find-Wallpaper / Prepare-Wallpaper / Set-Wallpaper).
 //
-// The configured source is validated, staged atomically as
-// WallpaperCache/AreaN.<ext> (so an image being edited or half-written never
-// reaches the screen) and applied with feh, which also publishes the
-// _XROOTPMAP_ID pixmap that the icon cells and the indicator copy from.
+// The configured source is checked to be a complete file and staged
+// atomically as WallpaperCache/Wall-<hash>.<ext>, named after the source's
+// path, size and time: an image being edited or half-written never reaches
+// the screen, and areas showing the same picture share one copy. feh draws it
+// and publishes the _XROOTPMAP_ID pixmap that the icon cells, the indicator,
+// the bar and the compositor copy from.
+//
+// An area switch must never wait for a picture to be decoded (feh takes half a
+// second on a 4K PNG), so:
+//   - the wallpaper already on screen (same picture, mode and screen size) is
+//     left alone;
+//   - every wallpaper feh has drawn is kept as a screen-sized pixmap, and
+//     showing it again only copies that pixmap to the root window, following
+//     the convention feh and Esetroot use: a pixmap owned by a short-lived
+//     connection kept with RetainPermanent, published as _XROOTPMAP_ID and
+//     ESETROOT_PMAP_ID, the previous one freed with XKillClient;
+//   - feh itself runs in the background; when it is done the picture is kept
+//     and the icon cells copy it.
 package desktop
 
 import "core:fmt"
-import "core:image"
-import "core:image/bmp"
-import "core:image/jpeg"
-import "core:image/png"
+import "core:hash"
 import "core:log"
 import "core:os"
 import "core:strings"
 import "core:time"
+import xlib "vendor:x11/xlib"
 import config "../config"
 import tx "../tx"
 
 Wallpaper_State :: struct {
-	last_applied:       f64, // tx.now() when our last feh call returned
+	last_applied:       f64, // tx.now() when our last root background landed
 	feh_missing_logged: bool,
+	shown:              string,      // heap: key of the wallpaper on screen, "" = unknown
+	shown_pixmap:       xlib.Pixmap, // _XROOTPMAP_ID when it landed (someone else may replace it)
+	drawn:              [dynamic]Drawn_Wallpaper, // least recently shown first
+	feh:                Child,       // the running feh (its stderr)
+	feh_key:            string,      // heap: what it draws
 }
 
-// FEH_TIMEOUT bounds how long a feh call may block the event loop.
+// A wallpaper feh drew, as a copy of the root pixmap (owned by our connection).
+@(private)
+Drawn_Wallpaper :: struct {
+	key:    string, // heap
+	pixmap: xlib.Pixmap,
+	w, h:   i32,
+}
+
+// FEH_TIMEOUT bounds how long a feh call may take before it is given up.
 @(private)
 FEH_TIMEOUT :: 20.0
+
+// Drawn wallpapers kept (each is a screen-sized pixmap in the X server):
+// as many as fit in DRAWN_BUDGET bytes, at most DRAWN_MAX.
+@(private)
+DRAWN_MAX :: 12
+@(private)
+DRAWN_BUDGET :: 192 * 1024 * 1024
+
+wallpaper_init :: proc(d: ^Daemon) {
+	child_init(&d.wallpaper.feh)
+	d.wallpaper.drawn = make([dynamic]Drawn_Wallpaper)
+}
+
+wallpaper_destroy :: proc(d: ^Daemon) {
+	w := &d.wallpaper
+	child_destroy(&w.feh)
+	delete(w.feh_key)
+	drawn_clear(d)
+	delete(w.drawn)
+	delete(w.shown)
+}
 
 // The source image configured for area `index`, when it exists and is not
 // empty (Find-Wallpaper). Used by `milk test` as well.
@@ -38,50 +84,78 @@ wallpaper_source :: proc(cfg: ^config.Config, runtime_root: string, index: int, 
 	return strings.clone(path, allocator), true
 }
 
-// Apply the wallpaper of area `index`; keeps the current one when nothing
-// usable is configured. Returns true when feh set a new wallpaper.
+// What area `index` wants on the root window: its picture (or a plain
+// background in the bar's colour) in the configured mode at the screen's size.
 @(private)
-apply_wallpaper :: proc(d: ^Daemon, index: int) -> bool {
+Wallpaper_Target :: struct {
+	key:    string,        // temp: identifies the drawn result (picture, its stamp, mode, screen size)
+	source: string,        // temp: the picture, "" = plain background
+	fi:     os.File_Info,
+	mode:   string,
+	solid:  tx.Color,
+}
+
+@(private)
+wallpaper_target :: proc(d: ^Daemon, index: int) -> (t: Wallpaper_Target, ok: bool) {
+	screen := tx.screen_rect(d.c)
+	t.mode = d.cfg.linux.wallpaper_mode
 	source, found := wallpaper_source(d.cfg, d.runtime_root, index)
-	cached: string
-	mode := d.cfg.linux.wallpaper_mode
-	if !found {
-		// No wallpaper for this area: a plain background in the bar's colour.
-		solid, ok := solid_background(d)
-		if !ok { return false }
-		log.debugf("Area %d: no wallpaper configured, using the bar colour", index)
-		cached = solid
-		mode = "tile"
+	if found {
+		fi, err := os.stat(source, context.temp_allocator)
+		if err != nil { return }
+		t.source, t.fi = source, fi
+		t.key = fmt.tprintf("%s|%d|%d|%s|%dx%d", source, time.time_to_unix_nano(fi.modification_time), fi.size, t.mode, screen.w, screen.h)
 	} else {
-		prepared: bool
-		cached, prepared = prepare_wallpaper(d, source, index)
-		if !prepared { return false }
+		// No wallpaper for this area: a plain background in the bar's colour.
+		t.solid = solid_color(d)
+		t.mode = "tile"
+		t.key = fmt.tprintf("solid|%02X%02X%02X|%dx%d", t.solid.r, t.solid.g, t.solid.b, screen.w, screen.h)
+	}
+	return t, true
+}
+
+// Show the wallpaper of area `index`; keeps the current one when nothing
+// usable is configured. Returns at once: feh, when it is needed, runs in the
+// background (wallpaper_feh_done).
+@(private)
+apply_wallpaper :: proc(d: ^Daemon, index: int) {
+	w := &d.wallpaper
+	target, ok := wallpaper_target(d, index)
+	if !ok { return }
+	key := target.key
+
+	if key == w.shown && w.shown_pixmap != 0 {
+		if pm, has := tx.get_pixmap_id(d.c, d.c.root, "_XROOTPMAP_ID"); has && pm == w.shown_pixmap {
+			// Already on screen; a slower request for another area must not land over it.
+			if child_running(&w.feh) && w.feh_key != key { feh_cancel(d) }
+			return
+		}
+	}
+	if child_running(&w.feh) && w.feh_key == key { return } // being drawn
+	if i := drawn_find(w, key); i >= 0 {
+		feh_cancel(d)
+		if show_drawn(d, i) {
+			log.debugf("Area %d: wallpaper shown from memory", index)
+			return
+		}
 	}
 
-	argv := []string{"feh", "--no-fehbg", fmt.tprintf("--bg-%s", mode), cached}
-	res := run_sync(argv, FEH_TIMEOUT, false)
-	d.wallpaper.last_applied = tx.now()
-	if res.not_found {
-		if !d.wallpaper.feh_missing_logged {
-			d.wallpaper.feh_missing_logged = true
-			log.error("feh is not installed; cannot apply the wallpaper")
-		}
-		return false
+	file: string
+	if target.source != "" {
+		staged, staged_ok := stage_wallpaper(d, target.source, target.fi)
+		if !staged_ok { return }
+		file = staged
+	} else {
+		solid, solid_ok := solid_background(d)
+		if !solid_ok { return }
+		file = solid
 	}
-	if !res.started {
-		log.error("Could not run feh")
-		return false
-	}
-	if res.timed_out {
-		log.errorf("feh did not finish within %.0f s", FEH_TIMEOUT)
-		return false
-	}
-	if res.exit_code != 0 {
-		log.errorf("feh exited with %d: %s", res.exit_code, strings.trim_space(string(res.stderr)))
-		return false
-	}
-	log.debugf("Area %d wallpaper applied: %s", index, cached)
-	return true
+	feh_start(d, key, file, target.mode)
+}
+
+@(private)
+solid_color :: proc(d: ^Daemon) -> tx.Color {
+	return tx.color_from_hex(d.cfg.bar.theme.background, tx.rgb(0xF5, 0xEE, 0xE6))
 }
 
 // A small tile in the bar's background colour (WallpaperCache/Solid-RRGGBB.ppm).
@@ -89,7 +163,7 @@ apply_wallpaper :: proc(d: ^Daemon, index: int) -> bool {
 solid_background :: proc(d: ^Daemon) -> (string, bool) {
 	cache_dir := join_path({d.runtime_root, d.cfg.paths.wallpaper_cache})
 	if !ensure_dir(cache_dir) { return "", false }
-	col := tx.color_from_hex(d.cfg.bar.theme.background, tx.rgb(0xF5, 0xEE, 0xE6))
+	col := solid_color(d)
 	path := join_path({cache_dir, fmt.tprintf("Solid-%02X%02X%02X.ppm", col.r, col.g, col.b)})
 	if os.is_file(path) { return path, true }
 	SIDE :: 16
@@ -103,23 +177,23 @@ solid_background :: proc(d: ^Daemon) -> (string, bool) {
 	return path, true
 }
 
-// Stage the source as WallpaperCache/AreaN.<ext>; an unchanged source (per the
-// stamp file) is reused without being read again.
+// WallpaperCache/Wall-<hash of path, time and size>.<ext>
 @(private)
-prepare_wallpaper :: proc(d: ^Daemon, source: string, index: int) -> (string, bool) {
-	cache_dir := join_path({d.runtime_root, d.cfg.paths.wallpaper_cache})
-	if !ensure_dir(cache_dir) { return "", false }
+staged_name :: proc(source: string, fi: os.File_Info) -> string {
 	ext := lower_ext(source)
 	if ext == "" { ext = ".img" }
-	target := join_path({cache_dir, fmt.tprintf("Area%d%s", index, ext)})
-	stamp := join_path({cache_dir, fmt.tprintf("Area%d.stamp", index)})
+	signature := fmt.tprintf("%s|%d|%d", source, time.time_to_unix_nano(fi.modification_time), fi.size)
+	return fmt.tprintf("Wall-%016x%s", hash.fnv64a(transmute([]u8)signature), ext)
+}
 
-	fi, serr := os.stat(source, context.temp_allocator)
-	if serr != nil { return "", false }
-	signature := fmt.tprintf("%s\n%d\n%d\n%s\n", source, time.time_to_unix_nano(fi.modification_time), fi.size, target)
-	if old, err := os.read_entire_file(stamp, context.temp_allocator); err == nil && string(old) == signature && os.is_file(target) {
-		return target, true
-	}
+// Stage the source in the cache folder; a copy made earlier is reused without
+// reading the source again.
+@(private)
+stage_wallpaper :: proc(d: ^Daemon, source: string, fi: os.File_Info) -> (string, bool) {
+	cache_dir := join_path({d.runtime_root, d.cfg.paths.wallpaper_cache})
+	if !ensure_dir(cache_dir) { return "", false }
+	target := join_path({cache_dir, staged_name(source, fi)})
+	if tfi, err := os.stat(target, context.temp_allocator); err == nil && tfi.size == fi.size { return target, true }
 
 	data, rerr := os.read_entire_file(source, context.allocator)
 	if rerr != nil {
@@ -127,12 +201,11 @@ prepare_wallpaper :: proc(d: ^Daemon, source: string, index: int) -> (string, bo
 		return "", false
 	}
 	defer delete(data)
-	if i64(len(data)) != fi.size || !validate_image(ext, data) {
+	if i64(len(data)) != fi.size || !image_complete(lower_ext(source), data) {
 		// Still being written or not an image (yet): leave the current wallpaper alone.
 		log.warnf("Wallpaper %s is not a complete image; keeping the current wallpaper", source)
 		return "", false
 	}
-
 	temporary := strings.concatenate({target, ".tmp"}, context.temp_allocator)
 	if werr := os.write_entire_file(temporary, data); werr != nil {
 		log.warnf("Could not write %s: %s", temporary, os.error_string(werr))
@@ -144,55 +217,264 @@ prepare_wallpaper :: proc(d: ^Daemon, source: string, index: int) -> (string, bo
 		os.remove(temporary)
 		return "", false
 	}
-	if serr2 := os.write_entire_file(stamp, signature); serr2 != nil {
-		log.debugf("Could not write %s: %s", stamp, os.error_string(serr2))
-	}
-	remove_stale_cache(cache_dir, index, target)
 	return target, true
 }
 
-// Remove AreaN.* files left from a previously configured image of another type.
-@(private)
-remove_stale_cache :: proc(cache_dir: string, index: int, keep: string) {
+// Remove staged copies no area uses any more, and the per-area copies of
+// earlier versions (AreaN.<ext>, recognised by the AreaN.stamp written with
+// them). Never in the wallpapers folder itself, where AreaN.png may be a
+// picture of the user's.
+wallpaper_prune :: proc(d: ^Daemon) {
+	cache_dir := join_path({d.runtime_root, d.cfg.paths.wallpaper_cache})
+	if cache_dir == join_path({d.runtime_root, d.cfg.paths.wallpapers}) { return }
 	infos, err := os.read_all_directory_by_path(cache_dir, context.temp_allocator)
 	if err != nil { return }
-	prefix := fmt.tprintf("Area%d.", index)
+	stamped := make(map[string]bool, allocator = context.temp_allocator) // "AreaN."
 	for fi in infos {
 		name := os.base(fi.fullpath)
-		if !strings.has_prefix(name, prefix) || strings.has_suffix(name, ".stamp") || strings.has_suffix(name, ".tmp") { continue }
-		if fi.fullpath == keep || os.base(keep) == name { continue }
-		os.remove(fi.fullpath)
+		if strings.has_prefix(name, "Area") && strings.has_suffix(name, ".stamp") { stamped[name[:len(name) - len("stamp")]] = true }
+	}
+	wanted := make(map[string]bool, allocator = context.temp_allocator)
+	for index, _ in d.cfg.workspaces {
+		source, found := wallpaper_source(d.cfg, d.runtime_root, index)
+		if !found { continue }
+		if fi, serr := os.stat(source, context.temp_allocator); serr == nil { wanted[staged_name(source, fi)] = true }
+	}
+	for fi in infos {
+		name := os.base(fi.fullpath)
+		dot := strings.index_byte(name, '.')
+		legacy := strings.has_prefix(name, "Area") && dot > 4 && name[:dot + 1] in stamped
+		staged := strings.has_prefix(name, "Wall-")
+		if (legacy || staged) && !(name in wanted) { os.remove(fi.fullpath) }
 	}
 }
 
-// Decode png/jpeg/bmp with core:image; other formats (webp, gif...) are
-// accepted when non-empty, as feh/imlib2 decodes more than core:image.
+// Draw the wallpaper with feh in the background.
 @(private)
-validate_image :: proc(ext: string, data: []byte) -> bool {
+feh_start :: proc(d: ^Daemon, key, file, mode: string) {
+	w := &d.wallpaper
+	exe, found := find_executable("feh")
+	if !found {
+		if !w.feh_missing_logged {
+			w.feh_missing_logged = true
+			log.error("feh is not installed; cannot apply the wallpaper")
+		}
+		return
+	}
+	argv := []string{exe, "--no-fehbg", fmt.tprintf("--bg-%s", mode), file}
+	if !child_start(&w.feh, argv, .Stderr, FEH_TIMEOUT) {
+		log.error("Could not run feh")
+		return
+	}
+	delete(w.feh_key)
+	w.feh_key = strings.clone(key)
+	log.debugf("feh: drawing %s (%s)", file, mode)
+}
+
+// feh's stderr is readable (or it may have exited: wallpaper_tick).
+@(private)
+wallpaper_feh_read :: proc(d: ^Daemon) {
+	if done, ok := child_read(&d.wallpaper.feh); done { wallpaper_feh_done(d, ok) }
+}
+
+@(private)
+wallpaper_feh_done :: proc(d: ^Daemon, ok: bool) {
+	w := &d.wallpaper
+	key := w.feh_key
+	w.feh_key = ""
+	defer delete(key)
+	if !ok {
+		log.errorf("feh could not draw the wallpaper: %s", strings.trim_space(string(w.feh.out[:])))
+		return
+	}
+	wallpaper_landed(d, key)
+	drawn_keep(d, key)
+	// The cells painted meanwhile copied the previous picture.
+	layer_refresh_backgrounds(d)
+	indicator_refresh(d)
+	tx.flush(d.c)
+}
+
+// Stop a feh call whose picture is no longer wanted.
+@(private)
+feh_cancel :: proc(d: ^Daemon) {
+	w := &d.wallpaper
+	if !child_running(&w.feh) { return }
+	child_kill(&w.feh)
+	delete(w.feh_key)
+	w.feh_key = ""
+}
+
+// Our wallpaper `key` is now the root background.
+@(private)
+wallpaper_landed :: proc(d: ^Daemon, key: string) {
+	w := &d.wallpaper
+	pm, _ := tx.get_pixmap_id(d.c, d.c.root, "_XROOTPMAP_ID")
+	w.shown_pixmap = pm
+	if w.shown != key {
+		delete(w.shown)
+		w.shown = strings.clone(key)
+	}
+	w.last_applied = tx.now()
+}
+
+@(private)
+wallpaper_tick :: proc(d: ^Daemon, now: f64) {
+	w := &d.wallpaper
+	if !child_running(&w.feh) { return }
+	if w.feh.fd < 0 {
+		// Its output ended before it exited.
+		if done, ok := child_poll(&w.feh); done { wallpaper_feh_done(d, ok) }
+		return
+	}
+	if now < w.feh.deadline { return }
+	log.errorf("feh did not finish within %.0f s", FEH_TIMEOUT)
+	feh_cancel(d)
+}
+
+@(private)
+wallpaper_next_timeout :: proc(d: ^Daemon, now: f64) -> f64 {
+	feh := &d.wallpaper.feh
+	if !child_running(feh) { return -1 }
+	if feh.fd < 0 { return CHILD_REAP_POLL }
+	return max(feh.deadline - now, 0)
+}
+
+// Whether a root background change now is ours (feh running or just landed).
+@(private)
+wallpaper_own_change :: proc(d: ^Daemon) -> bool {
+	return child_running(&d.wallpaper.feh) || tx.now() - d.wallpaper.last_applied < OWN_WALLPAPER_WINDOW
+}
+
+@(private)
+drawn_find :: proc(w: ^Wallpaper_State, key: string) -> int {
+	for &e, i in w.drawn { if e.key == key { return i } }
+	return -1
+}
+
+// Keep a copy of the root pixmap feh just made for `key`.
+@(private)
+drawn_keep :: proc(d: ^Daemon, key: string) {
+	w := &d.wallpaper
+	if drawn_find(w, key) >= 0 { return }
+	root_pm, ok := tx.root_pixmap(d.c)
+	if !ok { return }
+	pw, ph, sized := tx.drawable_size(d.c, xlib.Drawable(root_pm))
+	if !sized { return }
+	pm := xlib.CreatePixmap(d.c.dpy, xlib.Drawable(d.c.root), u32(pw), u32(ph), u32(d.c.depth))
+	gc := xlib.CreateGC(d.c.dpy, xlib.Drawable(pm), {}, nil)
+	xlib.CopyArea(d.c.dpy, xlib.Drawable(root_pm), xlib.Drawable(pm), gc, 0, 0, u32(pw), u32(ph), 0, 0)
+	xlib.FreeGC(d.c.dpy, gc)
+	drawn_add(d, key, pm, pw, ph)
+}
+
+// Keep a drawn wallpaper (the pixmap now belongs to the list); the least
+// recently shown one goes when the list is full, never the one on screen.
+@(private)
+drawn_add :: proc(d: ^Daemon, key: string, pm: xlib.Pixmap, pw, ph: i32) {
+	w := &d.wallpaper
+	for len(w.drawn) >= drawn_capacity(d) {
+		victim := -1
+		for e, i in w.drawn {
+			if e.key != w.shown { victim = i; break }
+		}
+		if victim < 0 { break }
+		old := w.drawn[victim]
+		xlib.FreePixmap(d.c.dpy, old.pixmap)
+		delete(old.key)
+		ordered_remove(&w.drawn, victim)
+	}
+	append(&w.drawn, Drawn_Wallpaper{key = strings.clone(key), pixmap = pm, w = pw, h = ph})
+}
+
+// How many screen-sized pixmaps fit in DRAWN_BUDGET (at least 3, at most DRAWN_MAX).
+@(private)
+drawn_capacity :: proc(d: ^Daemon) -> int {
+	screen := tx.screen_rect(d.c)
+	bytes := max(int(screen.w) * int(screen.h) * 4, 1)
+	return clamp(DRAWN_BUDGET / bytes, 3, DRAWN_MAX)
+}
+
+// Forget the drawn wallpapers (the screen size changed).
+wallpaper_forget_drawn :: proc(d: ^Daemon) {
+	drawn_clear(d)
+	delete(d.wallpaper.shown)
+	d.wallpaper.shown = ""
+}
+
+@(private)
+drawn_clear :: proc(d: ^Daemon) {
+	w := &d.wallpaper
+	for e in w.drawn {
+		xlib.FreePixmap(d.c.dpy, e.pixmap)
+		delete(e.key)
+	}
+	clear(&w.drawn)
+}
+
+// Put drawn wallpaper `i` on the root window the way feh does (see the top of
+// this file); the X server has done it by the time this returns.
+@(private)
+show_drawn :: proc(d: ^Daemon, i: int) -> bool {
+	w := &d.wallpaper
+	e := w.drawn[i]
+	tmp, connected := tx.connect(xlib.DisplayString(d.c.dpy))
+	if !connected { return false }
+	dpy := tmp.dpy
+	root := tmp.root
+	pm := xlib.CreatePixmap(dpy, xlib.Drawable(root), u32(e.w), u32(e.h), u32(tmp.depth))
+	gc := xlib.CreateGC(dpy, xlib.Drawable(pm), {}, nil)
+	xlib.CopyArea(dpy, xlib.Drawable(e.pixmap), xlib.Drawable(pm), gc, 0, 0, u32(e.w), u32(e.h), 0, 0)
+	xlib.FreeGC(dpy, gc)
+	// The previous wallpaper's owner, kept alive only for it, is let go
+	// (never one of our own drawn copies).
+	old_root, has_root := tx.get_pixmap_id(tmp, root, "_XROOTPMAP_ID")
+	old_set, has_set := tx.get_pixmap_id(tmp, root, "ESETROOT_PMAP_ID")
+	if has_root && has_set && old_root == old_set && !drawn_owns(w, old_set) {
+		if _, _, exists := tx.drawable_size(tmp, xlib.Drawable(old_set)); exists { xlib.KillClient(dpy, xlib.XID(old_set)) }
+	}
+	ids := [1]xlib.Pixmap{pm}
+	for name in ([]string{"_XROOTPMAP_ID", "ESETROOT_PMAP_ID"}) {
+		xlib.ChangeProperty(dpy, root, tx.atom(tmp, name), tx.ATOM_PIXMAP, 32, tx.PROP_MODE_REPLACE, &ids[0], 1)
+	}
+	xlib.SetWindowBackgroundPixmap(dpy, root, pm)
+	xlib.ClearWindow(dpy, root)
+	xlib.SetCloseDownMode(dpy, .RetainPermanent)
+	xlib.Sync(dpy, false)
+	tx.disconnect(tmp)
+
+	wallpaper_landed(d, e.key)
+	// Most recently shown last.
+	moved := w.drawn[i]
+	ordered_remove(&w.drawn, i)
+	append(&w.drawn, moved)
+	return true
+}
+
+@(private)
+drawn_owns :: proc(w: ^Wallpaper_State, pm: xlib.Pixmap) -> bool {
+	for e in w.drawn { if e.pixmap == pm { return true } }
+	return false
+}
+
+// Is the image file complete? Only the structure is looked at (decoding a 4K
+// picture would take longer than showing it): PNG ends with its IEND chunk,
+// JPEG has an end-of-image marker after its scan, BMP is as long as its
+// header says; other formats (webp, gif...) are accepted when not empty, as
+// feh/imlib2 decodes more than we check.
+@(private)
+image_complete :: proc(ext: string, data: []byte) -> bool {
 	if len(data) == 0 { return false }
 	switch ext {
 	case ".png":
-		img, err := png.load_from_bytes(data, {}, context.allocator)
-		defer if img != nil { png.destroy(img) }
-		return err == nil && img != nil && img.width >= 2 && img.height >= 2
+		SIGNATURE :: "\x89PNG\r\n\x1a\n"
+		if len(data) < 8 + 25 + 12 || string(data[:8]) != SIGNATURE { return false }
+		tail := data[max(len(data) - 64, 8):]
+		return strings.contains(string(tail), "IEND")
 	case ".jpg", ".jpeg", ".jpe", ".jfif":
-		img, err := jpeg.load_from_bytes(data, {}, context.allocator)
-		defer if img != nil { jpeg.destroy(img) }
-		if err == nil && img != nil { return img.width >= 2 && img.height >= 2 }
-		if jerr, is_jpeg := err.(image.JPEG_Error); is_jpeg {
-			#partial switch jerr {
-			case .Unsupported_Frame_Type, .Unsupported_12_Bit_Depth, .Multiple_SOS_Markers, .Extra_Data_After_SOS:
-				// Progressive/arithmetic/12-bit JPEGs are valid but beyond core:image.
-				return jpeg_structure_ok(data)
-			}
-		}
-		return false
+		return jpeg_structure_ok(data)
 	case ".bmp", ".dib":
-		img, err := bmp.load_from_bytes(data, {}, context.allocator)
-		defer if img != nil { bmp.destroy(img) }
-		if err == nil && img != nil { return img.width >= 2 && img.height >= 2 }
-		if _, is_bmp := err.(image.BMP_Error); is_bmp { return bmp_structure_ok(data) }
-		return false
+		return bmp_structure_ok(data)
 	}
 	return true
 }
