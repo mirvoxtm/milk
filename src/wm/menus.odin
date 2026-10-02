@@ -349,6 +349,7 @@ accel_for :: proc(m: ^Manager, action: string) -> string {
 		}
 		name := string(xlib.KeysymToString(k.keysym))
 		if len(name) == 1 { name = strings.to_upper(name, context.temp_allocator) }
+		if tap_sym(k.keysym) != NO_KEY && k.mod == {} { name = "Super" }
 		strings.write_string(&b, name)
 		return strings.to_string(b)
 	}

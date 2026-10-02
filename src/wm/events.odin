@@ -279,6 +279,17 @@ keypress :: proc(m: ^Manager, e: ^xlib.XEvent) -> bool {
 	keysym := xlib.KeycodeToKeysym(m.dpy, xlib.KeyCode(ev.keycode), 0)
 	state := cleanmask(m, ev.state)
 	m.ev_ctx = Action_Ctx{x = ev.x_root, y = ev.y_root, time = ev.time, state = ev.state}
+	// milk: Super on its own runs its binding when it is released (keyrelease).
+	// Its grab holds the keyboard while Super is down, so the keys pressed
+	// with it come here too and cancel the tap.
+	if tap := tap_sym(keysym); tap != NO_KEY {
+		if m.tap_key != tap { // a repeat keeps the time of the first press
+			m.tap_key = state == {} && tap_binding(m, tap) != nil ? tap : NO_KEY
+			m.tap_time = ev.time
+		}
+		return m.tap_key != NO_KEY
+	}
+	m.tap_key = NO_KEY
 	for i in 0 ..< len(m.keys) {
 		k := m.keys[i]
 		if keysym == k.keysym && cleanmask(m, k.mod) == state && k.func != nil {
@@ -288,6 +299,48 @@ keypress :: proc(m: ^Manager, e: ^xlib.XEvent) -> bool {
 		}
 	}
 	return false
+}
+
+// Super released after a press with nothing else in between: run its binding.
+keyrelease :: proc(m: ^Manager, e: ^xlib.XEvent) -> bool {
+	ev := &e.xkey
+	tap := tap_sym(xlib.KeycodeToKeysym(m.dpy, xlib.KeyCode(ev.keycode), 0))
+	if tap == NO_KEY || tap != m.tap_key { return false }
+	// An auto-repeat is a release followed by a press with the same time.
+	if xlib.Pending(m.dpy) > 0 {
+		next: xlib.XEvent
+		xlib.PeekEvent(m.dpy, &next)
+		if next.type == .KeyPress && next.xkey.keycode == ev.keycode && next.xkey.time == ev.time { return true }
+	}
+	m.tap_key = NO_KEY
+	if ev.time < m.tap_time || ev.time - m.tap_time > TAP_MAX_MS { return true } // held, not tapped
+	if k := tap_binding(m, tap); k != nil {
+		m.ev_ctx = Action_Ctx{x = ev.x_root, y = ev.y_root, time = ev.time, state = ev.state}
+		arg := k.arg
+		k.func(m, &arg)
+	}
+	return true
+}
+
+// How long Super may be held for a tap, milliseconds.
+TAP_MAX_MS :: 1000
+NO_KEY     :: xlib.KeySym(0)
+
+// The key a modifier stands for when it is bound on its own (both Super keys
+// are "super"); 0 for the others.
+tap_sym :: proc(sym: xlib.KeySym) -> xlib.KeySym {
+	#partial switch sym {
+	case .XK_Super_L, .XK_Super_R: return .XK_Super_L
+	}
+	return NO_KEY
+}
+
+// The binding of a modifier on its own.
+tap_binding :: proc(m: ^Manager, tap: xlib.KeySym) -> ^Key {
+	for &k in m.keys {
+		if k.keysym == tap && k.mod == {} && k.func != nil { return &k }
+	}
+	return nil
 }
 
 mappingnotify :: proc(m: ^Manager, e: ^xlib.XEvent) -> bool {

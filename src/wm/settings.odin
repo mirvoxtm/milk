@@ -384,10 +384,17 @@ settings_destroy :: proc(s: ^Settings) {
 }
 
 // Parse "super+shift+f": modifier names (super, alt, ctrl, shift, and "mod"
-// for the configured modifier) followed by an X key name.
+// for the configured modifier) followed by an X key name; a key without
+// modifiers ("Print", "F5") is bound alone, and "super" alone is Super tapped.
 parse_key_spec :: proc(spec: string, modkey: xlib.InputMask) -> (mod: xlib.InputMask, sym: xlib.KeySym, ok: bool) {
 	parts := strings.split(spec, "+", context.temp_allocator)
 	if len(parts) == 0 { return }
+	// "super" on its own: tapped (pressed and released with nothing else).
+	if len(parts) == 1 {
+		switch strings.to_lower(strings.trim_space(parts[0]), context.temp_allocator) {
+		case "super", "win", "mod4": return {}, .XK_Super_L, true
+		}
+	}
 	for part, i in parts {
 		name := strings.trim_space(part)
 		if i == len(parts) - 1 {

@@ -234,7 +234,8 @@ settings_open_window :: proc(w: ^Wizard) -> bool {
 	attrs: xlib.XSetWindowAttributes
 	bg := w.theme.bg
 	attrs.background_pixel = uint(bg.r) << 16 | uint(bg.g) << 8 | uint(bg.b)
-	attrs.event_mask = {.ButtonPress, .PointerMotion, .LeaveWindow, .KeyPress, .Exposure, .StructureNotify}
+	// KeyRelease: the shortcut capture takes Super on its own when it is released.
+	attrs.event_mask = {.ButtonPress, .PointerMotion, .LeaveWindow, .KeyPress, .KeyRelease, .Exposure, .StructureNotify}
 	w.win = xlib.CreateWindow(c.dpy, c.root, w.screen.x, w.screen.y, u32(ww), u32(wh), 0, c.depth, .InputOutput, c.visual,
 	                          {.CWBackPixel, .CWEventMask}, &attrs)
 	if w.win == 0 { return false }

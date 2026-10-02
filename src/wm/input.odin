@@ -99,6 +99,7 @@ grabkeys :: proc(m: ^Manager) {
 		// Skip modifier codes: only the first keysym of each keycode is compared.
 		first := syms[(k - start) * skip]
 		if first == xlib.KeySym(0) { continue }
+		if tap := tap_sym(first); tap != NO_KEY { first = tap } // "super" on its own: both Super keys
 		for key in m.keys {
 			if key.keysym != first { continue }
 			for mod in modifiers {

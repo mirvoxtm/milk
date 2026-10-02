@@ -224,7 +224,6 @@ SPANISH := [][2]string{
 	{"Brightness −", "Brillo −"},
 	{"Next", "Siguiente"},
 	{"Previous", "Anterior"},
-	{"Hold a modifier (Super, Ctrl, Alt or Shift) with the key.", "Usa una tecla modificadora (Super, Ctrl, Alt o Shift) junto con la tecla."},
 	{"Your shortcuts", "Tus atajos"},
 	{"Add shortcut", "Añadir atajo"},
 	{"No shortcuts yet: add one to open your favourite apps and sites.", "Todavía no hay atajos: crea uno para abrir tus aplicaciones y sitios favoritos."},
@@ -363,6 +362,8 @@ SPANISH := [][2]string{
 	{"Add a key combination", "Añadir una combinación de teclas"},
 	{"An area shortcut works with the numbers 1 to 9: Super+Ctrl with 3 becomes Super+Ctrl+1…9.", "Un atajo de área vale para los números del 1 al 9: Super+Ctrl con 3 se convierte en Super+Ctrl+1…9."},
 	{"Restore the default", "Restaurar el predeterminado"},
+	{"Use a modifier with that key. On their own: Super, F1…F12, Print Screen, Pause, Menu and media keys.", "Usa un modificador con esa tecla. Solas: Super, F1…F12, Impr Pant, Pausa, Menú y multimedia."},
+	{"Super on its own acts when the key is released, if no other key was used with it.", "Super solo actúa al soltar la tecla, si no se usó ninguna otra con ella."},
 	// Floating mode, window menus, desktop icons settings.
 	{"Files", "Archivos"},
 	{"Applications…", "Aplicaciones…"},

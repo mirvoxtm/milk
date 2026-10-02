@@ -443,6 +443,8 @@ handle_event :: proc(w: ^Wizard, ev: ^xlib.XEvent) {
 		}
 	case .KeyPress:
 		on_key(w, &ev.xkey)
+	case .KeyRelease:
+		if w.mode == .Settings && w.set.sc.ed.capturing { capture_release(w, &ev.xkey) }
 	case .ConfigureNotify:
 		if ev.xconfigure.window == w.win && w.mode == .Settings { settings_resized(w, ev.xconfigure.width, ev.xconfigure.height) }
 	case .ClientMessage:

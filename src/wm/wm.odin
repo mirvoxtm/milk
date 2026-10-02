@@ -95,6 +95,8 @@ Manager :: struct {
 	cascade_x, cascade_y: i32,            // wm.placement "cascade"
 	snap_preview:    xlib.Window,         // outline of a snap layout while dragging
 	ev_ctx:          Action_Ctx,          // the event that triggers the current binding
+	tap_key:         xlib.KeySym,         // Super pressed on its own, waiting for its release (events.odin)
+	tap_time:        xlib.Time,
 	ev_client:       ^Client,
 	last_click_window: xlib.Window,       // double clicks on title bars
 	last_click_button: u32,
@@ -275,6 +277,7 @@ handle_event :: proc(m: ^Manager, ev: ^xlib.XEvent) -> bool {
 		ewmh_sync(m)
 		return true
 	}
+	if ev.type == .ButtonPress { m.tap_key = NO_KEY } // Super with a click (a move, a resize) is no tap
 	if (ev.type == .KeyPress || ev.type == .KeyRelease) && switcher_key(m, ev) { return true }
 	if ev.type == .ButtonPress && switcher_button(m, &ev.xbutton) { return true }
 	if frame_event(m, ev) {
@@ -291,6 +294,7 @@ handle_event :: proc(m: ^Manager, ev: ^xlib.XEvent) -> bool {
 	case .EnterNotify:      consumed = enternotify(m, ev)
 	case .FocusIn:          consumed = focusin(m, ev)
 	case .KeyPress:         consumed = keypress(m, ev)
+	case .KeyRelease:       consumed = keyrelease(m, ev)
 	case .MappingNotify:    consumed = mappingnotify(m, ev)
 	case .MapRequest:       consumed = maprequest(m, ev)
 	case .MotionNotify:     consumed = motionnotify(m, ev)

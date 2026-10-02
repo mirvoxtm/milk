@@ -100,6 +100,7 @@ Shortcut_Editor :: struct {
 	scroll_apps: i32,
 	wm_action:      int, // index into ACTION_CHOICES, -1 = none (kind 3)
 	scroll_actions: i32,
+	super_alone:    bool, // Super is down and nothing else was pressed: its release captures "super"
 	// Editing one of milk's shortcuts instead (the capture adds to `keys`).
 	default_open:   bool,
 	default_index:  int,              // into config.DEFAULT_KEYS
@@ -430,6 +431,8 @@ key_label :: proc(w: ^Wizard, name: string) -> string {
 	case "up":                   return "↑"
 	case "down":                 return "↓"
 	case "print":                return "Print Screen"
+	case "scroll_lock":          return "Scroll Lock"
+	case "sys_req":              return "SysRq"
 	case "prior":                return "Page Up"
 	case "next":                 return "Page Down"
 	case "#":                    return "1…9"
@@ -485,6 +488,7 @@ capture_start :: proc(w: ^Wizard) {
 	ed := &w.set.sc.ed
 	ed.capturing = true
 	ed.hint = ""
+	ed.super_alone = false
 	w.focus = .None
 	// An active grab: the window manager's passive Super+… grabs cannot fire.
 	status := xlib.GrabKeyboard(w.c.dpy, w.win, false, .GrabModeAsync, .GrabModeAsync, xlib.CurrentTime)
@@ -510,6 +514,32 @@ is_modifier_key :: proc(name: string) -> bool {
 	return false
 }
 
+// Keys that type nothing and may be a shortcut on their own (besides F1…F35
+// and the XF86 media keys).
+@(private, rodata)
+SINGLE_KEYS := []string{"Print", "Pause", "Scroll_Lock", "Menu", "Insert", "Help", "Find", "Cancel", "Execute", "Undo", "Redo", "Sys_Req", "Break"}
+
+@(private)
+event_mods :: proc(state: xlib.InputMask) -> (mods: Mods) {
+	if .Mod4Mask in state { mods += {.Super} }
+	if .ControlMask in state { mods += {.Ctrl} }
+	if .Mod1Mask in state { mods += {.Alt} }
+	if .ShiftMask in state { mods += {.Shift} }
+	return
+}
+
+@(private)
+is_super_key :: proc(name: string) -> bool { return name == "Super_L" || name == "Super_R" }
+
+// Whether a key with no modifier can be a shortcut: one that types nothing.
+@(private)
+single_key_ok :: proc(name: string) -> bool {
+	if len(name) >= 2 && name[0] == 'F' && name[1] >= '0' && name[1] <= '9' { return true }
+	if strings.has_prefix(name, "XF86") { return true }
+	for k in SINGLE_KEYS { if k == name { return true } }
+	return false
+}
+
 @(private)
 capture_key :: proc(w: ^Wizard, ev: ^xlib.XKeyEvent) {
 	ed := &w.set.sc.ed
@@ -517,12 +547,13 @@ capture_key :: proc(w: ^Wizard, ev: ^xlib.XKeyEvent) {
 	cname := xlib.KeysymToString(sym)
 	if cname == nil { return }
 	name := string(cname)
-	if is_modifier_key(name) { return }
-	mods: Mods
-	if .Mod4Mask in ev.state { mods += {.Super} }
-	if .ControlMask in ev.state { mods += {.Ctrl} }
-	if .Mod1Mask in ev.state { mods += {.Alt} }
-	if .ShiftMask in ev.state { mods += {.Shift} }
+	mods := event_mods(ev.state)
+	if is_modifier_key(name) {
+		// Super pressed alone may become the shortcut when it is released.
+		ed.super_alone = is_super_key(name) && mods == {}
+		return
+	}
+	ed.super_alone = false
 	if name == "Escape" && mods == {} {
 		capture_stop(w)
 		return
@@ -537,10 +568,9 @@ capture_key :: proc(w: ^Wizard, ev: ^xlib.XKeyEvent) {
 		capture_add(w, format_spec(mods, "#"))
 		return
 	}
-	fkey := len(name) >= 2 && name[0] == 'F' && name[1] >= '0' && name[1] <= '9'
-	if mods == {} && !fkey && !strings.has_prefix(name, "XF86") {
-		ed.hint = tr(w, "Use uma tecla modificadora (Super, Ctrl, Alt ou Shift) junto com a tecla.",
-		             "Hold a modifier (Super, Ctrl, Alt or Shift) with the key.")
+	if mods == {} && !single_key_ok(name) {
+		ed.hint = tr(w, "Use um modificador com essa tecla. Sozinhas: Super, F1…F12, Print Screen, Pause, Menu e mídia.",
+		             "Use a modifier with that key. On their own: Super, F1…F12, Print Screen, Pause, Menu and media keys.")
 		w.dirty = true
 		return
 	}
@@ -550,6 +580,29 @@ capture_key :: proc(w: ^Wizard, ev: ^xlib.XKeyEvent) {
 	}
 	delete(ed.spec)
 	ed.spec = format_spec(mods, name)
+	ed.hint = ""
+	capture_stop(w)
+}
+
+// Super released with nothing pressed since it went down: "super" on its own.
+@(private)
+capture_release :: proc(w: ^Wizard, ev: ^xlib.XKeyEvent) {
+	ed := &w.set.sc.ed
+	cname := xlib.KeysymToString(xlib.LookupKeysym(ev, 0))
+	if cname == nil || !is_super_key(string(cname)) || !ed.super_alone { return }
+	ed.super_alone = false
+	if event_mods(ev.state) - {.Super} != {} { return }
+	if ed.default_open {
+		if strings.index_byte(config.DEFAULT_KEYS[ed.default_index].action, '#') >= 0 {
+			ed.hint = tr(w, "Segure as teclas modificadoras e pressione um número (1…9).", "Hold the modifiers and press a number (1…9).")
+			w.dirty = true
+			return
+		}
+		capture_add(w, strings.clone("super"))
+		return
+	}
+	delete(ed.spec)
+	ed.spec = strings.clone("super")
 	ed.hint = ""
 	capture_stop(w)
 }
@@ -1035,7 +1088,7 @@ draw_shortcut_editor :: proc(w: ^Wizard, cv: ^tx.Canvas, c: tx.Rect) {
 
 	// Conflicts and hints.
 	note := ""
-	note_color := th.warning
+	warn := true
 	if ed.hint != "" {
 		note = ed.hint
 	} else if ed.spec != "" {
@@ -1043,11 +1096,14 @@ draw_shortcut_editor :: proc(w: ^Wizard, cv: ^tx.Canvas, c: tx.Rect) {
 			note = tr(w, "Já é um atalho seu: ele será substituído ao salvar.", "Already one of your shortcuts: it is replaced when you save.")
 		} else if action, found := builtin_conflict(w, ed.spec); found {
 			note = fmt.tprintf(tr(w, "Substitui: %s (atalho do milk)", "Replaces: %s (milk shortcut)"), action)
+		} else if ed.spec == "super" {
+			note, warn = super_alone_note(w), false
 		}
 	}
 	if note != "" {
-		icon(w, w.f_icon_small, {c.x, y, 20, 24}, .Alert, note_color)
-		text(w, w.f_small, c.x + 26, y, 24, ellipsize(w, w.f_small, note, c.w - 26), note_color)
+		color := warn ? th.warning : th.muted
+		icon(w, w.f_icon_small, {c.x, y, 20, 24}, warn ? .Alert : .Info, color)
+		text(w, w.f_small, c.x + 26, y, 24, ellipsize(w, w.f_small, note, c.w - 26), color)
 	}
 	y += 30
 
@@ -1167,6 +1223,7 @@ draw_default_editor :: proc(w: ^Wizard, cv: ^tx.Canvas, c: tx.Rect) {
 		y += 58
 	}
 	note := ed.hint
+	if note == "" && key_listed(w, ed.keys[:], "super") { note = super_alone_note(w) }
 	if note == "" && areas {
 		note = tr(w, "Um atalho de área vale para os números de 1 a 9: Super+Ctrl com 3 vira Super+Ctrl+1…9.",
 		          "An area shortcut works with the numbers 1 to 9: Super+Ctrl with 3 becomes Super+Ctrl+1…9.")
@@ -1194,6 +1251,12 @@ draw_default_editor :: proc(w: ^Wizard, cv: ^tx.Canvas, c: tx.Rect) {
 		restore := tr(w, "Restaurar o padrão", "Restore the default")
 		button(w, cv, {c.x, footer_y, button_width(w, restore, .Arrow_Back_Up), BUTTON_H}, restore, .Text, .Sc_Key_Restore, 0, .Arrow_Back_Up)
 	}
+}
+
+@(private)
+super_alone_note :: proc(w: ^Wizard) -> string {
+	return tr(w, "Super sozinho age ao soltar a tecla, se nenhuma outra foi usada com ela.",
+	          "Super on its own acts when the key is released, if no other key was used with it.")
 }
 
 @(private)
