@@ -2,7 +2,8 @@
 # Region screenshot for milk (Super+Shift+S).
 # Uses the first tool available: flameshot (its own editor), maim, scrot, or
 # ImageMagick's `import` (drag a rectangle; a plain click takes that window).
-# Saved to <Pictures>/Screenshots and copied to the clipboard when xclip exists.
+# Saved to <Pictures>/Screenshots and copied to the clipboard (flameshot copies
+# by itself; the other tools need xclip).
 pictures=$(xdg-user-dir PICTURES 2>/dev/null)
 [ -n "$pictures" ] || pictures="$HOME/Pictures"
 dir="$pictures/Screenshots"
@@ -25,7 +26,9 @@ if command -v flameshot >/dev/null 2>&1; then
             printf '[General]\nuseX11LegacyScreenshot=true\n' >> "$ini"
         fi
     fi
-    exec flameshot gui --path "$dir"
+    # --path alone makes Enter / double-click only save the file; --clipboard
+    # copies it as well, so it can be pasted right away.
+    exec flameshot gui --path "$dir" --clipboard
 elif command -v maim >/dev/null 2>&1; then
     maim -s -u "$file" || exit 0
 elif command -v scrot >/dev/null 2>&1; then
