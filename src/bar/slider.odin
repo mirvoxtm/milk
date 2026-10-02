@@ -1,6 +1,6 @@
 // Volume and brightness popups: a small card anchored to the widget with the
 // icon (a mute toggle for the volume), a horizontal slider and the
-// percentage. Clicking or dragging on the track sets the value live, the
+// percentage; under the volume's, the audio outputs and inputs (audio.odin). Clicking or dragging on the track sets the value live, the
 // wheel changes it by 5 %, and so do the arrow keys while the card holds the
 // keyboard. Escape, a click outside, a second click on the widget or another
 // popup closes it.
@@ -27,6 +27,9 @@ Slider_Part :: enum { None, Button, Track }
 Slider_Popup :: struct {
 	card:       Card,
 	kind:       Slider_Kind,
+	anchor:     i32,               // the widget's centre, screen x
+	hits:       [dynamic]Menu_Hit, // the audio device rows
+	hover_row:  Menu_Hit,
 	dragging:   bool,
 	drag_value: int,
 	hover:      Slider_Part,
@@ -43,6 +46,8 @@ Slider_View :: struct {
 	known, muted: bool,
 	hover:        Slider_Part,
 	dragging:     bool,
+	audio_gen:    int, // the device lists changed
+	hover_row:    Menu_Hit,
 }
 
 // ---------------------------------------------------------------------------
@@ -74,8 +79,12 @@ slider_toggle :: proc(b: ^Bar, kind: Slider_Kind, w: ^Widget) {
 	p.kind = kind
 	p.dragging = false
 	p.hover = .None
+	p.hover_row = {}
+	if kind == .Volume { audio_query(b) }
 	anchor := widget_screen_rect(b, w)
-	card_prepare(b, &p.card, card_place(b, anchor.x + anchor.w / 2, .Center, SLIDER_WIDTH, SLIDER_HEIGHT), "milk slider")
+	p.anchor = anchor.x + anchor.w / 2
+	cw, ch := slider_size(b)
+	card_prepare(b, &p.card, card_place(b, p.anchor, .Center, cw, ch), "milk slider")
 	slider_draw(b)
 	card_map(b, &p.card, true)
 }
@@ -93,7 +102,15 @@ slider_close :: proc(b: ^Bar) {
 @(private)
 slider_destroy :: proc(b: ^Bar) {
 	card_destroy(b, &b.slider.card)
+	delete(b.slider.hits)
 	b.slider = {}
+}
+
+// The card's size: the slider, and the audio devices under the volume's.
+@(private)
+slider_size :: proc(b: ^Bar) -> (w, h: i32) {
+	if b.slider.kind != .Volume || audio_backend(b) == .None { return SLIDER_WIDTH, SLIDER_HEIGHT }
+	return MENU_WIDTH, SLIDER_HEIGHT + audio_height(b)
 }
 
 // Every loop iteration: follow outside changes (keys, polls, the wheel on the widget).
@@ -120,6 +137,8 @@ slider_view :: proc(b: ^Bar) -> Slider_View {
 	case .Brightness: v.value, v.known = b.bright.percent, b.bright.present
 	}
 	if p.dragging { v.value, v.known = p.drag_value, true }
+	if p.kind == .Volume { v.audio_gen = b.audio.gen }
+	v.hover_row = p.hover_row
 	return v
 }
 
@@ -171,7 +190,7 @@ slider_part_at :: proc(b: ^Bar, x, y: i32) -> Slider_Part {
 	p := &b.slider
 	if tx.rect_contains(p.button, x, y) { return .Button }
 	// The whole height of the card around the track is clickable.
-	hit := tx.Rect{p.track.x - SLIDER_THUMB - 4, 0, p.track.w + 2 * SLIDER_THUMB + 8, p.card.rect.h}
+	hit := tx.Rect{p.track.x - SLIDER_THUMB - 4, 0, p.track.w + 2 * SLIDER_THUMB + 8, SLIDER_HEIGHT}
 	if tx.rect_contains(hit, x, y) { return .Track }
 	return .None
 }
@@ -197,6 +216,10 @@ slider_event :: proc(b: ^Bar, ev: ^xlib.XEvent) {
 				p.drag_value = -1
 				slider_drag_to(b, x)
 			case .None:
+				if i := menu_hit_at(p.hits[:], x, y); i >= 0 {
+					hit := p.hits[i]
+					audio_choose(b, hit.action == .Audio_Output, hit.index)
+				}
 			}
 		case 4: slider_step(b, SLIDER_STEP)
 		case 5: slider_step(b, -SLIDER_STEP)
@@ -207,6 +230,8 @@ slider_event :: proc(b: ^Bar, ev: ^xlib.XEvent) {
 			slider_drag_to(b, x)
 		} else {
 			p.hover = slider_part_at(b, x, y)
+			p.hover_row = {}
+			if i := menu_hit_at(p.hits[:], x, y); i >= 0 { p.hover_row = p.hits[i] }
 		}
 	case .ButtonRelease:
 		if p.dragging && i32(ev.xbutton.button) == 1 {
@@ -217,6 +242,7 @@ slider_event :: proc(b: ^Bar, ev: ^xlib.XEvent) {
 		}
 	case .LeaveNotify:
 		if !p.dragging { p.hover = .None }
+		p.hover_row = {}
 	case .KeyPress:
 		#partial switch xlib.LookupKeysym(&ev.xkey, 0) {
 		case .XK_Escape:          slider_close(b); return
@@ -237,8 +263,12 @@ slider_draw :: proc(b: ^Bar) {
 	th := &b.theme
 	view := slider_view(b)
 	p.shown = view
-	w, h := p.card.rect.w, p.card.rect.h
-	pt := painter_begin(b, w, h)
+	w, full_h := slider_size(b)
+	if w != p.card.rect.w || full_h != p.card.rect.h {
+		card_fit(b, &p.card, card_place(b, p.anchor, .Center, w, full_h), "milk slider")
+	}
+	h := i32(SLIDER_HEIGHT) // the slider's row; the devices go below it
+	pt := painter_begin(b, w, full_h)
 
 	// Icon button (the mute toggle for the volume).
 	bs := i32(SLIDER_BUTTON)
@@ -274,5 +304,7 @@ slider_draw :: proc(b: ^Bar) {
 	tx.canvas_fill_circle(&pt.cv, thumb_x, thumb_y, SLIDER_THUMB, fill)
 	tx.canvas_fill_circle(&pt.cv, thumb_x, thumb_y, 3, tx.color_with_alpha(th.background, 200))
 
+	clear(&p.hits)
+	if p.kind == .Volume && full_h > h { audio_paint(b, &pt, h, &p.hits, view.hover_row) }
 	painter_present(&pt, &p.card)
 }

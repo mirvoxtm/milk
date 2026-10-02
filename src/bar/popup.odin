@@ -355,6 +355,7 @@ popups_tick :: proc(b: ^Bar, now: f64) -> f64 {
 	}
 	next = earliest(next, wifi_tick(b, now))
 	next = earliest(next, bt_tick(b, now))
+	next = earliest(next, audio_tick(b, now)) // the volume card's device list (audio.odin)
 	next = earliest(next, osd_tick(b, now)) // the volume/brightness pop-up (osd.odin)
 	return next
 }

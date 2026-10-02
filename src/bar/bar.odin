@@ -77,6 +77,7 @@ Bar :: struct {
 	widgets:         [dynamic]Widget,
 	settings:        Settings_Popup,
 	slider:          Slider_Popup,
+	audio:           Audio_State, // the volume card's outputs and inputs (audio.odin)
 	wifi:            Wifi_Menu,
 	btm:             Bt_Menu,
 	osd:             OSD_Popup, // volume/brightness pop-up of the media keys (osd.odin)
@@ -197,6 +198,7 @@ destroy :: proc(b: ^Bar) {
 	settings_destroy(b)
 	slider_close(b)
 	slider_destroy(b)
+	audio_destroy(b)
 	wifi_close(b)
 	wifi_destroy(b)
 	bt_close(b)

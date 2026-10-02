@@ -58,6 +58,9 @@ Icon :: enum {
 	Watch,
 	Milk,
 	App_Window,
+	Microphone, // audio inputs (audio.odin)
+	Device_Tv,  // HDMI / DisplayPort outputs
+	Check,      // the audio device in use
 }
 
 // Tabler icon names (keys of tabler.json).
@@ -102,6 +105,9 @@ TABLER_NAMES := [Icon]string{
 	.Watch               = "device-watch",
 	.Milk                = "milk",
 	.App_Window          = "app-window",
+	.Microphone          = "microphone",
+	.Device_Tv           = "device-tv",
+	.Check               = "check",
 }
 
 // Codepoints of the names above in noctalia-tabler.ttf, used when tabler.json is missing.
@@ -115,7 +121,7 @@ TABLER_DEFAULTS := [Icon]rune{
 	.Battery_4 = 0xEA32, .Battery_Charging = 0xEA33, .Power = 0xEB0D, .Settings = 0xEB20,
 	.Lock = 0xEAE2, .Refresh = 0xEB13, .Headphones = 0xEABD, .Keyboard = 0xEBD6, .Mouse = 0xEAF9,
 	.Phone = 0xEA8A, .Laptop = 0xEB64, .Speaker = 0xEA8B, .Gamepad = 0xF1D2, .Watch = 0xEBF9,
-	.Milk = 0xEF13, .App_Window = 0xEFE6,
+	.Milk = 0xEF13, .App_Window = 0xEFE6, .Microphone = 0xEAF0, .Device_Tv = 0xEA8D, .Check = 0xEA5E,
 }
 
 // Nerd Font (Material Design range) equivalents.
@@ -129,7 +135,7 @@ NERD_CODEPOINTS := [Icon]rune{
 	.Battery_4 = 0xF0079, .Battery_Charging = 0xF0084, .Power = 0xF0425, .Settings = 0xF0493,
 	.Lock = 0xF033E, .Refresh = 0xF0450, .Headphones = 0xF02CB, .Keyboard = 0xF030C, .Mouse = 0xF037D,
 	.Phone = 0xF011C, .Laptop = 0xF0322, .Speaker = 0xF04C3, .Gamepad = 0xF0297, .Watch = 0xF05A9,
-	.Milk = 0xF0176, .App_Window = 0xF08C6,
+	.Milk = 0xF0176, .App_Window = 0xF08C6, .Microphone = 0xF036C, .Device_Tv = 0xF0502, .Check = 0xF012C,
 }
 
 // Last resort: Unicode symbols, alternatives separated by '|'.
@@ -143,7 +149,7 @@ UNICODE_SYMBOLS := [Icon]string{
 	.Battery_4 = "🔋|▮", .Battery_Charging = "⚡|+", .Power = "⏻|⏼|○", .Settings = "⚙|☸|*",
 	.Lock = "🔒|⚿|#", .Refresh = "⟳|↻|@", .Headphones = "🎧|♫", .Keyboard = "⌨|K", .Mouse = "🖱|M",
 	.Phone = "📱|▯", .Laptop = "💻|▭", .Speaker = "🔈|♪", .Gamepad = "🎮|G", .Watch = "⌚|◷",
-	.Milk = "🥛|m", .App_Window = "🗔|▭|□",
+	.Milk = "🥛|m", .App_Window = "🗔|▭|□", .Microphone = "🎤|●", .Device_Tv = "📺|▭", .Check = "✓|✔|*",
 }
 
 SYMBOL_FONTS :: []string{"Noto Sans Symbols 2", "Noto Sans Symbols", "DejaVu Sans"}

@@ -25,6 +25,7 @@ import clip "../clip"
 import config "../config"
 import desktop "../desktop"
 import nightlight "../nightlight"
+import polkit "../polkit"
 import lock "../lock"
 import notify "../notify"
 import oobe "../oobe"
@@ -430,6 +431,7 @@ Runner :: struct {
 	session:          Session_Menu,        // the bar's power menu (session.odin)
 	lactase_children: [dynamic]posix.pid_t, // lactase launchers not reaped yet
 	apps:             App_Theme,           // GTK/Qt apps in milk's colours (apptheme.odin)
+	agent:            ^polkit.Agent,       // the polkit authentication agent (nil: off)
 }
 
 // The strip the bar occupies on its monitor, which the window manager must keep free.
@@ -606,6 +608,9 @@ run :: proc(opts: ^Options, cfg: ^config.Config) -> int {
 	defer nightlight.destroy(r.night, g_restart)
 	session_start(&r)
 	defer session_stop(&r)
+	// Programs that need a password (pkexec, GParted...) ask polkit, which asks this agent.
+	r.agent = polkit.create(c, cfg)
+	defer polkit.destroy(r.agent)
 
 	wake_read, sig_ok := install_signals()
 	if !sig_ok {
@@ -640,6 +645,8 @@ loop :: proc(r: ^Runner) {
 			if tx.input_filter(&ev) { continue }
 			if apptheme_event(r, &ev) { continue } // the XSETTINGS window
 			if session_event(r, &ev) { continue }
+			// The password dialog holds the keyboard: its keys never reach the shortcuts.
+			if polkit.handle_event(r.agent, &ev) { continue }
 			if r.manager != nil { wm.handle_event(r.manager, &ev) }
 			desktop.handle_event(r.daemon, &ev)
 			if r.bar != nil { bar.handle_event(r.bar, &ev) }
@@ -690,6 +697,7 @@ loop :: proc(r: ^Runner) {
 		if r.night != nil { nightlight.tick(r.night, now) }
 		session_tick(r)
 		lock.tick(r.idle, now)
+		polkit.tick(r.agent, now)
 		if r.bar != nil && r.notes != nil { bar.set_badge(r.bar, "notifications", notify.unread_count(r.notes)) }
 
 		timeout := desktop.next_timeout(r.daemon, now)
@@ -714,6 +722,7 @@ loop :: proc(r: ^Runner) {
 			if lt >= 0 && (timeout < 0 || lt < timeout) { timeout = lt }
 		}
 		if lt := lock.next_timeout(r.idle, now); lt >= 0 && (timeout < 0 || lt < timeout) { timeout = lt }
+		if pt := polkit.next_timeout(r.agent, now); pt >= 0 && (timeout < 0 || pt < timeout) { timeout = pt }
 
 		// Everything allocated from the temp allocator during this iteration is
 		// released here; the poll set is built afterwards so it stays valid.
@@ -733,7 +742,10 @@ loop :: proc(r: ^Runner) {
 			for fd in notify.poll_fds(r.notes) { append(&fds, posix.pollfd{fd = posix.FD(fd), events = {.IN}}) }
 			notes_fds = len(fds) - 2 - bar_fds - desktop_fds
 		}
+		lock_fds := len(fds)
 		for fd in lock.poll_fds(r.idle) { append(&fds, posix.pollfd{fd = posix.FD(fd), events = {.IN}}) }
+		lock_fds = len(fds) - lock_fds
+		for fd in polkit.poll_fds(r.agent) { append(&fds, posix.pollfd{fd = posix.FD(fd), events = {.IN}}) }
 		if tx.pending(conn) > 0 { continue }
 
 		timeout_ms: c.int = -1
@@ -752,8 +764,10 @@ loop :: proc(r: ^Runner) {
 				desktop.handle_fd(r.daemon, i32(pf.fd))
 			} else if i < bar_fds + desktop_fds + notes_fds {
 				if r.notes != nil { notify.handle_fd(r.notes, i32(pf.fd)) }
-			} else {
+			} else if i < bar_fds + desktop_fds + notes_fds + lock_fds {
 				lock.handle_fd(r.idle, i32(pf.fd))
+			} else {
+				polkit.handle_fd(r.agent, i32(pf.fd))
 			}
 		}
 	}
@@ -787,6 +801,7 @@ reload :: proc(r: ^Runner) {
 	if r.clips != nil { clip.reload(r.clips, cfg) }
 	if r.night != nil { nightlight.reload(r.night, cfg) }
 	lock.reload(r.idle, cfg)
+	polkit.reload(r.agent, cfg)
 	apply_keyboard(cfg)
 	write_rofi_theme(cfg)
 	apptheme_apply(r)
@@ -824,6 +839,7 @@ reload_theme :: proc(r: ^Runner) {
 	if r.notes != nil { notify.retheme(r.notes, cfg) }
 	if r.clips != nil { clip.reload(r.clips, cfg) }
 	lock.reload(r.idle, cfg)
+	polkit.reload(r.agent, cfg)
 	write_rofi_theme(cfg)
 	apptheme_apply(r)
 	oobe.refresh_wallpaper_theme_files(cfg)

@@ -52,6 +52,8 @@ every area keeps its own wallpaper, colours and icons, and can have a name and a
 - a **lock screen**: super+shift+l, after a while without use (the screen dims first) and before the computer sleeps. video players and browsers keep it away while they play. settings → lock & idle.
 - **night light**: warmer colours at night, from sunset or at the hours you choose. settings → display, or the quick settings.
 - a **pop-up** for the volume and brightness keys.
+- **audio devices**: click the volume in the bar to pick the output (speakers, headphones, hdmi) and the microphone - what's playing follows.
+- a **password dialog** for programs that need administrator rights (gparted, `pkexec`, update tools): milk is the session's polkit agent.
 - **shortcuts your way**: settings → shortcuts adds your own and changes milk's - give any of them other keys, turn it off or restore it. a shortcut can be a single key too: print screen, pause, menu, the f keys, the media keys or super on its own (it acts when you let go of it).
 - **gtk and qt apps** take milk's colours too, and follow them live (with adw-gtk3 and qt5ct/qt6ct, which the installer adds).
 

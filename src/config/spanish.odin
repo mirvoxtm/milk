@@ -583,4 +583,17 @@ SPANISH := [][2]string{
 	{"Lock now", "Bloquear ahora"},
 	{"Video players and browsers hold idle off while they play.", "Los reproductores de vídeo y los navegadores aplazan la inactividad mientras reproducen."},
 	{"Shortcut: %s. %s", "Atajo: %s. %s"},
+	// The polkit password dialog (package polkit).
+	{"Authentication required", "Autenticación necesaria"},
+	{"A program needs administrator rights.", "Un programa necesita permisos de administrador."},
+	{"As %s", "Como %s"},
+	{"switch", "cambiar"},
+	{"Waiting for polkit…", "Esperando a polkit…"},
+	{"Authenticate", "Autenticar"},
+	{"Could not reach polkit's password checker.", "No se pudo contactar con el verificador de contraseñas de polkit."},
+	{"Wrong password. Try again.", "Contraseña incorrecta. Inténtalo de nuevo."},
+	// Audio devices in the volume card (bar/audio.odin).
+	{"Output", "Salida"},
+	{"Input", "Entrada"},
+	{"Could not switch", "No se pudo cambiar"},
 }

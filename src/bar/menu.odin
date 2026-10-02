@@ -20,6 +20,7 @@ Menu_Action :: enum {
 	None,
 	Wifi_Radio, Wifi_Rescan, Wifi_Network, Wifi_Current, Wifi_Disconnect, Wifi_Connect, Wifi_Editor,
 	Bt_Power, Bt_Scan, Bt_Device, Bt_Disconnect, Bt_New,
+	Audio_Output, Audio_Input, // the volume card's devices (audio.odin)
 }
 
 @(private)

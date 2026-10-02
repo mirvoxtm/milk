@@ -37,6 +37,8 @@ Job_Kind :: enum {
 	Bt_State,          // adapter, paired and discovered devices (Bluetooth menu)
 	Bt_Scan,           // timed discovery
 	Bt_Action,         // power, connect, disconnect, pair/trust steps; tag = MAC
+	Audio_Query,       // outputs and inputs (the volume card)
+	Audio_Set,         // the default output or input
 }
 
 Job :: struct {
@@ -254,6 +256,8 @@ finish_job :: proc(b: ^Bar, job: ^Job, now: f64) {
 		wifi_job_done(b, job)
 	case .Bt_State, .Bt_Scan, .Bt_Action:
 		bt_job_done(b, job)
+	case .Audio_Query, .Audio_Set:
+		audio_job_done(b, job)
 	}
 }
 
