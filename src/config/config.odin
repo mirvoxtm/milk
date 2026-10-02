@@ -18,7 +18,7 @@ BAR_POSITIONS       :: []string{"top", "bottom"}
 OVERRIDE_MODES      :: []string{"auto", "always", "never"}
 // Globals (not constants): a constant slice would be re-materialised on the
 // stack of whoever uses it, and default_bar() hands these out to the loader.
-@(rodata) DEFAULT_BAR_START  := []string{"launcher", "active_window"}
+@(rodata) DEFAULT_BAR_START  := []string{"launcher", "tasks"}
 @(rodata) DEFAULT_BAR_CENTER := []string{"workspaces", "media"}
 @(rodata) DEFAULT_BAR_END    := []string{"tray", "clipboard", "network", "bluetooth", "volume", "brightness", "battery", "date", "clock", "notifications", "settings", "session"}
 BAR_WIDGETS         :: []string{"launcher", "active_window", "workspaces", "media", "spacer", "notifications", "clipboard",

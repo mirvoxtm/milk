@@ -39,7 +39,7 @@ import "core:strings"
 import xlib "vendor:x11/xlib"
 import tx "../tx"
 
-@(private) TASK_MAX_W    :: 200 // widest pill
+@(private) TASK_MAX_W    :: 216 // widest pill
 @(private) TASK_GAP      :: 4   // between two pills
 @(private) TASK_MIN_TEXT :: 48  // with less room for their titles the pills show only icons
 @(private) TASK_TAIL     :: 2   // a title's end gets a little more room than the icon's start
@@ -418,12 +418,14 @@ tasks_window_destroyed :: proc(b: ^Bar, win: xlib.Window) {
 // ---------------------------------------------------------------------------
 
 // Pills are as tall as the hover pills; `pad` centres the icon in a round
-// icon-only pill and starts the icon of a titled one.
+// icon-only pill; `side`, roomier, is the space at both ends of a titled
+// pill and of "+N".
 @(private)
-task_metrics :: proc(b: ^Bar) -> (ph, icon, pad: i32) {
+task_metrics :: proc(b: ^Bar) -> (ph, icon, pad, side: i32) {
 	ph = hover_height(b)
 	icon = clamp(i32(b.cfg.bar.icon_size), 8, max(8, ph - 6))
 	pad = max(2, (ph - icon) / 2)
+	side = pad + max(4, ph / 4)
 	return
 }
 
@@ -435,7 +437,7 @@ measure_tasks :: proc(b: ^Bar, w: ^Widget, limit: i32) {
 	tasks.more = 0
 	tasks.compact_w = 0
 	if !tasks.enabled || b.font == nil { return }
-	ph, icon, pad := task_metrics(b)
+	ph, icon, pad, side := task_metrics(b)
 	if icon != tasks.icon_size {
 		for &t in tasks.clients { drop_task_icon(&t) }
 		tasks.icon_size = icon
@@ -448,7 +450,7 @@ measure_tasks :: proc(b: ^Bar, w: ^Widget, limit: i32) {
 	if n == 0 { return }
 
 	// Natural widths: the whole title, up to TASK_MAX_W.
-	frame := 2 * pad + TASK_TAIL + icon + TEXT_INK_GAP // a pill without its title
+	frame := 2 * side + TASK_TAIL + icon + TEXT_INK_GAP // a pill without its title
 	labels := make([]string, n, context.temp_allocator)
 	pills := make([]i32, n, context.temp_allocator)
 	gaps := i32(n - 1) * TASK_GAP
@@ -474,8 +476,8 @@ measure_tasks :: proc(b: ^Bar, w: ^Widget, limit: i32) {
 			if i32(n) * (ph + TASK_GAP) - TASK_GAP > limit {
 				// As many icons as fit next to a "+N" pill for the rest.
 				placed = n - 1
-				for placed > 0 && i32(placed) * (ph + TASK_GAP) + more_width(b, n - placed, ph, pad) > limit { placed -= 1 }
-				if placed == 0 && more_width(b, n, ph, pad) > limit { return } // no room at all
+				for placed > 0 && i32(placed) * (ph + TASK_GAP) + more_width(b, n - placed, ph, side) > limit { placed -= 1 }
+				if placed == 0 && more_width(b, n, ph, side) > limit { return } // no room at all
 			}
 		}
 	}
@@ -504,7 +506,7 @@ measure_tasks :: proc(b: ^Bar, w: ^Widget, limit: i32) {
 		x += s.w + TASK_GAP
 	}
 	if tasks.more > 0 {
-		more := Task_Slot{index = -1, x = x, w = more_width(b, tasks.more, ph, pad), label = fmt.tprintf("+%d", tasks.more)}
+		more := Task_Slot{index = -1, x = x, w = more_width(b, tasks.more, ph, side), label = fmt.tprintf("+%d", tasks.more)}
 		append(&tasks.slots, more)
 		x += more.w + TASK_GAP
 	}
@@ -529,8 +531,8 @@ water_level :: proc(pills: []i32, budget: i32) -> i32 {
 }
 
 @(private)
-more_width :: proc(b: ^Bar, count: int, ph, pad: i32) -> i32 {
-	return max(ph, tx.text_width(b.c, b.font, fmt.tprintf("+%d", count)) + 2 * pad)
+more_width :: proc(b: ^Bar, count: int, ph, side: i32) -> i32 {
+	return max(ph, tx.text_width(b.c, b.font, fmt.tprintf("+%d", count)) + 2 * side)
 }
 
 // Width of the (first) task list as last measured.
@@ -575,15 +577,15 @@ surface_fill :: proc(b: ^Bar, hot: bool) -> tx.Color {
 }
 
 @(private)
-task_icon_x :: proc(s: Task_Slot, icon, pad: i32) -> i32 {
-	return s.icon_only ? (s.w - icon) / 2 : pad
+task_icon_x :: proc(s: Task_Slot, icon, side: i32) -> i32 {
+	return s.icon_only ? (s.w - icon) / 2 : side
 }
 
 // Pills and window icons (canvas pass).
 @(private)
 draw_tasks :: proc(b: ^Bar, cv: ^tx.Canvas, w: ^Widget, hovered: bool) {
 	tasks := &b.tasks
-	ph, icon, pad := task_metrics(b)
+	ph, icon, _, side := task_metrics(b)
 	hot_slot := -1
 	if hovered {
 		// The slots may have moved under a still pointer since the last motion.
@@ -603,7 +605,7 @@ draw_tasks :: proc(b: ^Bar, cv: ^tx.Canvas, w: ^Widget, hovered: bool) {
 		fill, _, opacity := task_look(b, t, hot)
 		if fill.a > 0 { tx.canvas_fill_rounded_rect(cv, r, f32(ph) / 2, fill) }
 		if t.has_icon {
-			tx.canvas_blit_image(cv, t.icon, r.x + task_icon_x(s, icon, pad), b.body.y + (b.body.h - t.icon.h) / 2, opacity)
+			tx.canvas_blit_image(cv, t.icon, r.x + task_icon_x(s, icon, side), b.body.y + (b.body.h - t.icon.h) / 2, opacity)
 		}
 	}
 }
@@ -612,7 +614,7 @@ draw_tasks :: proc(b: ^Bar, cv: ^tx.Canvas, w: ^Widget, hovered: bool) {
 @(private)
 draw_tasks_text :: proc(b: ^Bar, ts: ^tx.Text_Surface, w: ^Widget) {
 	tasks := &b.tasks
-	_, icon, pad := task_metrics(b)
+	_, icon, _, side := task_metrics(b)
 	x0 := b.body.x + w.x
 	baseline := b.body.y + b.text_baseline
 	for s in tasks.slots {
@@ -623,7 +625,7 @@ draw_tasks_text :: proc(b: ^Bar, ts: ^tx.Text_Surface, w: ^Widget) {
 		}
 		t := &tasks.clients[s.index]
 		_, ink, _ := task_look(b, t, false)
-		ix := x0 + s.x + task_icon_x(s, icon, pad)
+		ix := x0 + s.x + task_icon_x(s, icon, side)
 		if g := &b.icons.glyphs[.App_Window]; !t.has_icon && g.ok {
 			gx := ix + (icon - glyph_ink_w(g)) / 2 - g.ink_x
 			tx.draw_text(ts, g.font, gx, b.body.y + (b.body.h - g.ink_h) / 2 + g.ink_y, g.text, ink)

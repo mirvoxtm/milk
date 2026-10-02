@@ -298,7 +298,7 @@ SPANISH := [][2]string{
 	{"Session", "Sesión"},
 	{"Spacer", "Espacio"},
 	{"milk", "milk"},
-	{"The default: title left, areas centred", "El predeterminado: título a la izquierda, áreas en el centro"},
+	{"The default: open windows left, areas centred", "El predeterminado: ventanas abiertas a la izquierda, áreas en el centro"},
 	{"Minimal", "Mínimo"},
 	{"Just areas, the clock and the essentials", "Solo áreas, reloj y lo esencial"},
 	{"Classic", "Clásico"},

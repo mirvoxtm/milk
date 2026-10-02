@@ -52,7 +52,7 @@
     "radius": 16,
     "start": [
       "launcher",
-      "active_window"
+      "tasks"
     ],
     "style": "floating",
     "theme": {

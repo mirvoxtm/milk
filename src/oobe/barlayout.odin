@@ -50,8 +50,8 @@ Bar_Layout_Preset :: struct {
 
 @(private, rodata)
 BAR_LAYOUT_PRESETS := []Bar_Layout_Preset{
-	{"milk", "milk", "O padrão: título à esquerda, áreas no centro", "The default: title left, areas centred",
-	 {"launcher", "active_window"}, {"workspaces", "media"},
+	{"milk", "milk", "O padrão: janelas abertas à esquerda, áreas no centro", "The default: open windows left, areas centred",
+	 {"launcher", "tasks"}, {"workspaces", "media"},
 	 {"tray", "clipboard", "network", "bluetooth", "volume", "brightness", "battery", "date", "clock", "notifications", "settings", "session"}, "", ""},
 	{"Mínimo", "Minimal", "Só áreas, relógio e o essencial", "Just areas, the clock and the essentials",
 	 {"workspaces"}, {"clock"}, {"network", "volume", "battery", "session"}, "", ""},
