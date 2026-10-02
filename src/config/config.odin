@@ -33,6 +33,7 @@ Workspace :: struct {
 	name:      string,
 	folder:    string,
 	wallpaper: string, // "" when null / not configured
+	icon:      string, // an area icon (area_icons.odin), "" = none
 }
 
 Paths :: struct {
@@ -47,6 +48,7 @@ Indicator_Options :: struct {
 	font:      string, // fontconfig pattern
 	font_size: f64,    // points (96 DPI)
 	position:  string, // center | top | bottom
+	show_number: bool, // "AREA N" before the name (an area without a name always shows it)
 }
 
 Shortcut_Options :: struct {
@@ -113,6 +115,7 @@ Bar_Options :: struct {
 	media_idle_text:       string,
 	title_max_width:       int,
 	show_empty_workspaces: bool,
+	workspace_icons:       bool, // the areas with an icon show it instead of their dot
 	spacing:               int,      // gap between widgets
 	spacer_width:          int,      // width of an explicit "spacer" widget
 	style:                 string,   // full (edge to edge) | floating (margins, rounded corners)
@@ -497,7 +500,7 @@ workspace :: proc(cfg: ^Config, index: int) -> (Workspace, bool) {
 }
 
 default_indicator :: proc() -> Indicator_Options {
-	return {enabled = true, duration = 2.4, font = "sans:bold", font_size = 11, position = "bottom"}
+	return {enabled = true, duration = 2.4, font = "sans:bold", font_size = 11, position = "bottom", show_number = true}
 }
 
 default_shortcuts :: proc() -> Shortcut_Options {
@@ -534,6 +537,7 @@ default_bar :: proc() -> Bar_Options {
 	b.media_idle_text = "" // "" = "Nada Reproduzindo" / "Nothing playing" / … in milk's language
 	b.title_max_width = 320
 	b.show_empty_workspaces = true
+	b.workspace_icons = true
 	b.spacing = 14
 	b.spacer_width = 10
 	b.style = "full"
@@ -707,7 +711,8 @@ parse_linux :: proc(l: ^Loader, root: json.Object, out: ^Linux_Options) -> bool 
 
 	ind := get_object(l, section, "indicator", "linux") or_return
 	{
-		reject_unknown(l, ind, {"enabled", "duration", "font", "fontSize", "position"}, "linux.indicator") or_return
+		reject_unknown(l, ind, {"enabled", "duration", "font", "fontSize", "position", "showNumber"}, "linux.indicator") or_return
+		out.indicator.show_number = get_bool(l, ind, "showNumber", "linux.indicator", ind_defaults.show_number) or_return
 		out.indicator.enabled = get_bool(l, ind, "enabled", "linux.indicator", ind_defaults.enabled) or_return
 		out.indicator.duration = get_number(l, ind, "duration", "linux.indicator", ind_defaults.duration, 0.1) or_return
 		out.indicator.font = get_string(l, ind, "font", "linux.indicator", ind_defaults.font) or_return
@@ -761,7 +766,7 @@ parse_bar :: proc(l: ^Loader, root: json.Object, out: ^Bar_Options) -> bool {
 	reject_unknown(l, section, {"enabled", "height", "position", "monitor", "overrideRedirect", "opacity", "font", "fontSize",
 	                            "iconFontFile", "iconFont", "iconSize", "theme", "start", "center", "end", "commands",
 	                            "launcherIcon", "dateFormat", "clockFormat", "locale", "mediaIdleText", "titleMaxWidth",
-	                            "showEmptyWorkspaces", "spacing", "spacerWidth", "style", "margin", "radius"}, "bar") or_return
+	                            "showEmptyWorkspaces", "workspaceIcons", "spacing", "spacerWidth", "style", "margin", "radius"}, "bar") or_return
 	out.enabled = get_bool(l, section, "enabled", "bar", d.enabled) or_return
 	h := get_number(l, section, "height", "bar", f64(d.height), 16, 200) or_return
 	out.height = int(h)
@@ -803,6 +808,7 @@ parse_bar :: proc(l: ^Loader, root: json.Object, out: ^Bar_Options) -> bool {
 	tw := get_number(l, section, "titleMaxWidth", "bar", f64(d.title_max_width), 40) or_return
 	out.title_max_width = int(tw)
 	out.show_empty_workspaces = get_bool(l, section, "showEmptyWorkspaces", "bar", d.show_empty_workspaces) or_return
+	out.workspace_icons = get_bool(l, section, "workspaceIcons", "bar", d.workspace_icons) or_return
 	sp := get_number(l, section, "spacing", "bar", f64(d.spacing), 0) or_return
 	out.spacing = int(sp)
 	sw := get_number(l, section, "spacerWidth", "bar", f64(d.spacer_width), 0) or_return
@@ -1288,7 +1294,15 @@ parse_root :: proc(l: ^Loader, root: json.Object, cfg: ^Config) -> bool {
 				wallpaper = relative_path(l, wraw, fmt.tprintf("workspaces.%s.wallpaper", key)) or_return
 			}
 		}
-		cfg.workspaces[index] = Workspace{index = index, name = name, folder = folder, wallpaper = wallpaper}
+		icon := ""
+		if iraw, has_icon := eobj["icon"]; has_icon {
+			if _, is_null := iraw.(json.Null); !is_null {
+				s, is_str := iraw.(string)
+				if !is_str { return fail(l, "Workspace %s icon must be a string or null.", key) }
+				icon = strings.clone(strings.trim_space(s))
+			}
+		}
+		cfg.workspaces[index] = Workspace{index = index, name = name, folder = folder, wallpaper = wallpaper, icon = icon}
 	}
 
 	parse_linux(l, root, &cfg.linux) or_return
@@ -1302,7 +1316,7 @@ parse_root :: proc(l: ^Loader, root: json.Object, cfg: ^Config) -> bool {
 destroy :: proc(cfg: ^Config) {
 	if cfg == nil { return }
 	delete(cfg.paths.common); delete(cfg.paths.wallpapers); delete(cfg.paths.wallpaper_cache)
-	for _, ws in cfg.workspaces { delete(ws.name); delete(ws.folder); delete(ws.wallpaper) }
+	for _, ws in cfg.workspaces { delete(ws.name); delete(ws.folder); delete(ws.wallpaper); delete(ws.icon) }
 	delete(cfg.workspaces)
 	delete(cfg.linux.wallpaper_mode)
 	delete(cfg.linux.indicator.font); delete(cfg.linux.indicator.position)

@@ -15,7 +15,9 @@ import "core:log"
 import "core:math"
 import "core:slice"
 import "core:strings"
+import "core:unicode/utf8"
 import xlib "vendor:x11/xlib"
+import config "../config"
 import tx "../tx"
 
 Widget_Kind :: enum {
@@ -497,6 +499,8 @@ Workspace_Item :: struct {
 	index: int,
 	x, w:  i32,
 	kind:  Dot_Kind,
+	glyph: string,         // the area's icon (temp allocator), "" = a dot
+	ext:   tx.XGlyphInfo, // its ink
 }
 
 Dot_Metrics :: struct {
@@ -530,13 +534,36 @@ workspace_items :: proc(b: ^Bar, x0: i32) -> []Workspace_Item {
 		// While something is dragged every area is a drop target (drop.odin).
 		if !active && !occupied && !b.cfg.bar.show_empty_workspaces && !b.dropping { continue }
 		kind: Dot_Kind = active ? .Active : (occupied ? .Occupied : .Empty)
-		w := active ? m.pill_w : m.slot
+		it := Workspace_Item{index = i, kind = kind}
+		it.w = active ? m.pill_w : m.slot
+		if glyph, ext, ok := area_glyph(b, i); ok {
+			// An icon instead of the dot; the active one on an accent pill.
+			it.glyph, it.ext = glyph, ext
+			it.w = active ? i32(ext.width) + 2 * area_pill_pad(b) : i32(ext.width) + 4
+		}
 		if len(items) > 0 { x += m.gap }
-		append(&items, Workspace_Item{index = i, x = x, w = w, kind = kind})
-		x += w
+		it.x = x
+		append(&items, it)
+		x += it.w
 	}
 	return items[:]
 }
+
+// The icon of area `i` (0-based) on the bar: workspaces.N.icon, with
+// bar.workspaceIcons on and the glyph in the Tabler font.
+@(private)
+area_glyph :: proc(b: ^Bar, i: int) -> (glyph: string, ext: tx.XGlyphInfo, ok: bool) {
+	if !b.cfg.bar.workspace_icons || b.icons.tabler == nil { return }
+	r, has := config.workspace_icon(b.cfg, i + 1)
+	if !has || !tx.font_has_glyph(b.c, b.icons.tabler, r) { return }
+	buf, n := utf8.encode_rune(r)
+	glyph = strings.clone(string(buf[:n]), context.temp_allocator)
+	return glyph, tx.text_extents(b.c, b.icons.tabler, glyph), true
+}
+
+// Space beside the icon of the active area, inside its pill.
+@(private)
+area_pill_pad :: proc(b: ^Bar) -> i32 { return max(6, hover_height(b) / 3) }
 
 @(private)
 workspaces_width :: proc(b: ^Bar) -> i32 {
@@ -556,6 +583,14 @@ draw_workspaces :: proc(b: ^Bar, cv: ^tx.Canvas, w: ^Widget) {
 		cx := f32(ox + it.x) + f32(it.w) / 2
 		target := it.index + 1 == b.drop_target
 		if target { draw_drop_target(b, cv, it, cx) }
+		if it.glyph != "" {
+			// The icon itself is drawn with the text (draw_workspace_icons).
+			if it.kind == .Active {
+				ph := hover_height(b)
+				tx.canvas_fill_rounded_rect(cv, tx.Rect{ox + it.x, oy + (h - ph) / 2, it.w, ph}, f32(ph) / 2, b.theme.accent)
+			}
+			continue
+		}
 		switch it.kind {
 		case .Active:
 			tx.canvas_fill_rounded_rect(cv, tx.Rect{ox + it.x, oy + h / 2 - m.pill_h / 2, it.w, m.pill_h}, f32(m.pill_h) / 2, b.theme.accent)
@@ -565,6 +600,25 @@ draw_workspaces :: proc(b: ^Bar, cv: ^tx.Canvas, w: ^Widget) {
 			// A drop target lights up: an empty area's dot as an occupied one.
 			if target { tx.canvas_fill_circle(cv, cx, cy, m.occupied_r, b.theme.accent) } else { tx.canvas_fill_circle(cv, cx, cy, m.empty_r, b.theme.dot_empty) }
 		}
+	}
+}
+
+// The areas' icons (Xft pass): on the accent pill for the active area, in the
+// dot colours for the others.
+@(private)
+draw_workspace_icons :: proc(b: ^Bar, ts: ^tx.Text_Surface, w: ^Widget) {
+	th := &b.theme
+	for it in workspace_items(b, w.x + w.pad) {
+		if it.glyph == "" { continue }
+		color := th.dot_empty
+		switch it.kind {
+		case .Active:   color = th.accent_foreground
+		case .Occupied: color = th.accent
+		case .Empty:    if it.index + 1 == b.drop_target { color = th.accent }
+		}
+		gx := b.body.x + it.x + (it.w - i32(it.ext.width)) / 2 + i32(it.ext.x)
+		baseline := b.body.y + (b.body.h - i32(it.ext.height)) / 2 + i32(it.ext.y)
+		tx.draw_text(ts, b.icons.tabler, gx, baseline, it.glyph, color)
 	}
 }
 
@@ -620,6 +674,10 @@ draw_widget_shapes :: proc(b: ^Bar, cv: ^tx.Canvas, w: ^Widget, hovered: bool) {
 
 @(private)
 draw_widget_text :: proc(b: ^Bar, ts: ^tx.Text_Surface, w: ^Widget) {
+	if w.kind == .Workspaces {
+		draw_workspace_icons(b, ts, w)
+		return
+	}
 	if w.kind == .Tasks {
 		draw_tasks_text(b, ts, w)
 		return

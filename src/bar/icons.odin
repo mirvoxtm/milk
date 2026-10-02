@@ -164,6 +164,7 @@ Glyph :: struct {
 Icon_Set :: struct {
 	fonts:  [dynamic]^tx.Font,
 	glyphs: [Icon]Glyph,
+	tabler: ^tx.Font, // the Tabler font (one of `fonts`), for the area icons; nil without it
 }
 
 @(private)
@@ -175,6 +176,7 @@ destroy_icons :: proc(b: ^Bar) {
 	for f in b.icons.fonts { tx.font_close(b.c, f) }
 	delete(b.icons.fonts)
 	b.icons.fonts = nil
+	b.icons.tabler = nil
 }
 
 @(private)
@@ -189,6 +191,7 @@ resolve_icons :: proc(b: ^Bar) {
 		if os.exists(opts.icon_font_file) {
 			if f, ok := tx.font_open_file(b.c, opts.icon_font_file, size); ok {
 				tabler = f
+				set.tabler = f
 				append(&set.fonts, f)
 				load_tabler_map(opts.icon_font_file, &codepoints)
 			}

@@ -86,7 +86,8 @@
       "enabled": true,
       "font": "sans:bold",
       "fontSize": 11,
-      "position": "bottom"
+      "position": "bottom",
+      "showNumber": true
     },
     "shortcuts": {
       "font": "sans",

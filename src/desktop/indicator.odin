@@ -1,6 +1,8 @@
 // Visual feedback for the active area (windows/src/Indicator.ps1), in a
 // Material style: a pill-shaped toast with the centred caption "AREA N · Name"
-// that slides out from behind the bar (bottom or top of the work area), rests
+// (just the name with linux.indicator.showNumber off), after the area's icon
+// when it has one (workspaces.N.icon, a glyph of the bar's Tabler font), that
+// slides out from behind the bar (bottom or top of the work area), rests
 // for `duration` seconds and slides back. Colours follow the bar theme
 // (accent background, accentForeground text).
 //
@@ -11,7 +13,9 @@ package desktop
 
 import "core:fmt"
 import "core:math"
+import "core:os"
 import "core:strings"
+import "core:unicode/utf8"
 import xlib "vendor:x11/xlib"
 import config "../config"
 import tx "../tx"
@@ -23,12 +27,15 @@ import tx "../tx"
 @(private) TOAST_ENTER  :: 0.26 // seconds at animationScale 1
 @(private) TOAST_EXIT   :: 0.20
 @(private) TOAST_FRAME  :: 1.0 / 60.0
+@(private) TOAST_ICON_GAP :: 10 // between the icon and the caption
 
 @(private)
 Toast_Phase :: enum { Hidden, Entering, Resting, Leaving }
 
 Indicator :: struct {
 	font:        ^tx.Font,
+	icon_font:   ^tx.Font, // the bar's Tabler font (nil: no icons)
+	glyph:       string,   // owned: the area's icon as text, "" = none
 	window:      xlib.Window,
 	pixmap:      xlib.Pixmap,
 	visible:     bool,
@@ -51,7 +58,9 @@ indicator_init :: proc(d: ^Daemon) {
 indicator_reconfigure :: proc(d: ^Daemon) {
 	indicator_hide(d)
 	tx.font_close(d.c, d.indicator.font)
+	tx.font_close(d.c, d.indicator.icon_font)
 	d.indicator.font = nil
+	d.indicator.icon_font = nil
 	indicator_open_font(d)
 }
 
@@ -63,8 +72,10 @@ indicator_destroy :: proc(d: ^Daemon) {
 	}
 	tx.pixmap_free(d.c, ind.pixmap)
 	tx.font_close(d.c, ind.font)
+	tx.font_close(d.c, ind.icon_font)
 	delete(ind.name)
 	delete(ind.text)
+	delete(ind.glyph)
 	ind^ = {}
 }
 
@@ -75,12 +86,17 @@ indicator_open_font :: proc(d: ^Daemon) {
 	ok: bool
 	d.indicator.font, ok = tx.font_open(d.c, opts.font, px)
 	if !ok { d.indicator.font, _ = tx.font_open(d.c, "sans:bold", px) }
+	if file := d.cfg.bar.icon_font_file; file != "" && os.exists(file) {
+		d.indicator.icon_font, _ = tx.font_open_file(d.c, file, max(8, i32(f32(px) * 1.3 + 0.5)))
+	}
 }
 
-// "ÁREA 2 · Lazer", or "ÁREA 2" when the area has no name ("AREA 2" in English).
-indicator_caption :: proc(index: int, name: string, lang: config.Language, allocator := context.temp_allocator) -> string {
+// "ÁREA 2 · Lazer", or "ÁREA 2" when the area has no name ("AREA 2" in
+// English); just "Lazer" without the number.
+indicator_caption :: proc(index: int, name: string, lang: config.Language, show_number := true, allocator := context.temp_allocator) -> string {
 	word := config.tr(lang, "ÁREA", "AREA")
 	if strings.trim_space(name) == "" { return fmt.aprintf("%s %d", word, index, allocator = allocator) }
+	if !show_number { return strings.clone(strings.trim_space(name), allocator) }
 	return fmt.aprintf("%s %d · %s", word, index, name, allocator = allocator)
 }
 
@@ -111,10 +127,17 @@ indicator_show :: proc(d: ^Daemon, index: int, name: string) {
 	}
 	ind.index = index
 	delete(ind.text)
-	ind.text = indicator_caption(index, name, d.cfg.bar.language, context.allocator)
+	ind.text = indicator_caption(index, name, d.cfg.bar.language, d.cfg.linux.indicator.show_number, context.allocator)
+	delete(ind.glyph)
+	ind.glyph = ""
+	if r, has := config.workspace_icon(d.cfg, index); has && tx.font_has_glyph(c, ind.icon_font, r) {
+		buf, n := utf8.encode_rune(r)
+		ind.glyph = strings.clone(string(buf[:n]))
+	}
 
 	font := ind.font
 	w := tx.text_width(c, font, ind.text) + 2 * TOAST_PAD_X
+	if ind.glyph != "" { w += i32(tx.text_extents(c, ind.icon_font, ind.glyph).width) + TOAST_ICON_GAP }
 	h := font.ascent + font.descent + 2 * TOAST_PAD_Y
 	ind.w, ind.h = w, h
 
@@ -184,7 +207,16 @@ toast_pixmap :: proc(d: ^Daemon) -> xlib.Pixmap {
 	tx.canvas_fill(&cv, bg)
 	pm := tx.canvas_to_pixmap(d.c, cv)
 	ts := tx.text_surface_make(d.c, xlib.Drawable(pm))
-	tx.draw_text_centered_v(&ts, ind.font, (ind.w - tx.text_width(d.c, ind.font, ind.text)) / 2, 0, ind.h, ind.text, fg)
+	text_w := tx.text_width(d.c, ind.font, ind.text)
+	x := (ind.w - text_w) / 2
+	if ind.glyph != "" {
+		// The icon's ink, centred on the pill's height, then the caption.
+		ext := tx.text_extents(d.c, ind.icon_font, ind.glyph)
+		x = (ind.w - (i32(ext.width) + TOAST_ICON_GAP + text_w)) / 2
+		tx.draw_text(&ts, ind.icon_font, x + i32(ext.x), (ind.h - i32(ext.height)) / 2 + i32(ext.y), ind.glyph, fg)
+		x += i32(ext.width) + TOAST_ICON_GAP
+	}
+	tx.draw_text_centered_v(&ts, ind.font, x, 0, ind.h, ind.text, fg)
 	tx.text_surface_destroy(&ts)
 	return pm
 }

@@ -50,6 +50,8 @@ Control :: enum {
 	Theme_Apps, // appearance.themeApps (GTK and Qt apps in milk's colours)
 	// lock.odin
 	Lock_Enabled, Lock_After, Dim_After, Screen_Off_After, Suspend_After, Lock_On_Suspend, Inhibit_Fullscreen,
+	// areas.odin
+	Area_Number, Area_Bar_Icons,
 }
 
 @(private) ANIM_SCALES :: [4]f64{0, 0.5, 1, 1.5}
@@ -113,6 +115,7 @@ Settings :: struct {
 	fx_poll:        f64,
 	fx_children:    [dynamic]posix.pid_t, // lactase settings apps not reaped yet
 	names:          [dynamic][dynamic]u8,
+	areas:          Areas_State, // Áreas: icons and the toast's number (areas.odin)
 	sc:             Shortcuts,
 	ted:            Theme_Editor,
 	lay:            Layout_Editor,
@@ -203,6 +206,7 @@ settings_load_values :: proc(w: ^Wizard) {
 		if ws, ok := cfg.workspaces[n]; ok { append(&name, ..transmute([]u8)ws.name) }
 		append(&s.names, name)
 	}
+	areas_load_values(w)
 }
 
 @(private)
@@ -213,6 +217,7 @@ settings_destroy :: proc(w: ^Wizard) {
 	delete(s.fx_children)
 	for n in s.names { delete(n) }
 	delete(s.names)
+	areas_destroy(w)
 	clear_edits(w)
 	delete(s.edits)
 	shortcuts_destroy(w)
@@ -337,7 +342,7 @@ section_info :: proc(w: ^Wizard, s: Section) -> (icon: Icon, title, desc: string
 	case .Lock:
 		return .Lock, tr(w, "Bloqueio e inatividade", "Lock & idle"), tr(w, "Tela de bloqueio e o que acontece quando o computador fica sem uso.", "The lock screen and what happens when the computer is not in use.")
 	case .Areas:
-		return .Layout_Grid, tr(w, "Áreas", "Areas"), tr(w, "Nomes das áreas de trabalho, mostrados no aviso de área.", "Workspace names, shown by the area toast.")
+		return .Layout_Grid, tr(w, "Áreas", "Areas"), tr(w, "Nomes e ícones das áreas, mostrados no aviso de área e na barra.", "Area names and icons, shown by the area toast and on the bar.")
 	case .About:
 		return .Info, tr(w, "Sobre", "About"), tr(w, "Versão, arquivos e assistente inicial.", "Version, files and the setup wizard.")
 	}
@@ -426,8 +431,7 @@ draw_settings :: proc(w: ^Wizard, cv: ^tx.Canvas) {
 		ry := c.y
 		rows_lock(w, cv, c, &ry)
 	case .Areas:
-		ry := c.y
-		rows_areas(w, cv, c, &ry)
+		draw_areas_section(w, cv, c)
 	case .About:
 		draw_about(w, cv, c)
 	}
@@ -653,17 +657,6 @@ rows_clipboard :: proc(w: ^Wizard, cv: ^tx.Canvas, c: tx.Rect, y: ^i32) {
 }
 
 @(private)
-rows_areas :: proc(w: ^Wizard, cv: ^tx.Canvas, c: tx.Rect, y: ^i32) {
-	s := &w.set
-	for n, i in w.areas {
-		if y^ + SET_ROW_H > c.y + c.h + 8 { break }
-		row := next_row(w, cv, c, y, fmt.tprintf(tr(w, "Área %d", "Area %d"), n), "")
-		text_control(w, cv, row, min(i32(380), c.w - 140), s.names[i][:], fmt.tprintf(tr(w, "Sem nome (AREA %d)", "No name (AREA %d)"), n),
-		             int(Control.Area_Name) * 100 + i)
-	}
-}
-
-@(private)
 draw_about :: proc(w: ^Wizard, cv: ^tx.Canvas, c: tx.Rect) {
 	th := &w.theme
 	y := c.y + 8
@@ -731,6 +724,7 @@ settings_action :: proc(w: ^Wizard, action: Action, arg: int) {
 		if sec != s.section {
 			capture_stop(w)
 			s.avatar.picking = false
+			s.areas.picking = -1
 			s.section = sec
 			w.focus = .None
 			w.hover = {}
@@ -864,7 +858,7 @@ toggle_control :: proc(w: ^Wizard, ctrl: Control) {
 		s.theme_apps = !s.theme_apps
 		set_edit(w, "appearance.themeApps", json.Boolean(s.theme_apps))
 	case:
-		if !windows_toggle(w, ctrl) && !display_toggle(w, ctrl) && !lock_toggle(w, ctrl) { return }
+		if !windows_toggle(w, ctrl) && !display_toggle(w, ctrl) && !lock_toggle(w, ctrl) && !areas_toggle(w, ctrl) { return }
 	}
 	settings_changed(w, .Values)
 }
