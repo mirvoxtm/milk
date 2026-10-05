@@ -688,8 +688,8 @@ draw_about :: proc(w: ^Wizard, cv: ^tx.Canvas, c: tx.Rect) {
 	uw := button_width(w, update, .Arrow_Down)
 	button(w, cv, {c.x, y, uw, BUTTON_H}, update, .Tonal, .Update_Milk, 0, .Arrow_Down)
 	y += BUTTON_H + 12
-	text(w, w.f_small, c.x, y, 22, ellipsize(w, w.f_small, tr(w, "Baixa e compila o milk, o Spoil e o lactase e reinicia o milk sem fechar suas janelas.",
-	                                                           "Downloads and builds milk, Spoil and lactase, then restarts milk without closing your windows."), c.w), th.muted)
+	text(w, w.f_small, c.x, y, 22, ellipsize(w, w.f_small, tr(w, "Baixa e compila o milk, o Spoil, o lactase e o snippy e reinicia o milk sem fechar suas janelas.",
+	                                                           "Downloads and builds milk, Spoil, lactase and snippy, then restarts milk without closing your windows."), c.w), th.muted)
 }
 
 // `milk update` in the configured terminal, which stays open on the result.

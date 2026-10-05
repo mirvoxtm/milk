@@ -71,7 +71,7 @@ commands:
   setup        run the setup wizard (theme, wallpapers, bar, keyboard) now
   settings     open the settings app (optionally on a section: wallpapers, windows, desktop...)
   switch N     ask the window manager to activate area N
-  update       pull milk, Spoil and lactase, rebuild them and restart in place
+  update       pull milk, Spoil, lactase and snippy, rebuild them and restart in place
                ("update check" only says whether there is something new)
   doctor       check the installation: programs, fonts, session, configuration
   lock         lock the screen (asks the running milk; locks by itself when none runs)

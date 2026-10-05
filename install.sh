@@ -10,10 +10,11 @@
 # Interactive by default: it asks for the language, which parts to install,
 # shows the plan and waits for your confirmation. It installs every dependency
 # with your package manager, the Odin compiler when your distribution has no
-# recent one, milk itself, Spoil (the file manager, Super+E) and lactase (the
-# compositor) next to milk, matugen (colours from the wallpaper) if you want
-# it, the Tabler icon font when Noctalia's copy is missing, the Alacritty theme
-# and the login-screen entry. Run over an existing installation it reinstalls
+# recent one, milk itself, Spoil (the file manager, Super+E), lactase (the
+# compositor) and snippy (screenshots and screen recording, Super+Shift+S) next
+# to milk, matugen (colours from the wallpaper) if you want it, the Tabler
+# icon font when Noctalia's copy is missing, the Alacritty theme and the
+# login-screen entry. Run over an existing installation it reinstalls
 # everything (your settings stay), and the setup wizard always opens afterwards.
 #
 #   ./install.sh                 interactive install / reinstall
@@ -24,6 +25,7 @@
 #   ./install.sh --minimal       skip the optional tools
 #   ./install.sh --no-spoil      do not install Spoil
 #   ./install.sh --no-lactase    do not install lactase (shadows, animations, transparency)
+#   ./install.sh --no-snippy     do not install snippy (screenshots and screen recording)
 #   ./install.sh --no-matugen    do not install matugen (theme colours from the wallpaper)
 #   ./install.sh --with-sddm     also install and enable SDDM when no display manager is enabled
 #   ./install.sh --uninstall     remove the session entry, the commands and the icon font
@@ -35,6 +37,7 @@ set -euo pipefail
 MILK_URL="https://github.com/mirvoxtm/milk.git"
 SPOIL_URL="https://github.com/mirvoxtm/spoil.git"
 LACTASE_URL="https://github.com/mirvoxtm/lactase.git"
+SNIPPY_URL="https://github.com/mirvoxtm/snippy.git"
 TABLER_VERSION="3.48.0"
 TABLER_URL="https://registry.npmjs.org/@tabler/icons-webfont/-/icons-webfont-${TABLER_VERSION}.tgz"
 NOCTALIA_FONT="/usr/share/noctalia/assets/fonts/noctalia-tabler.ttf"
@@ -82,7 +85,7 @@ set_lang() {
     lang_chosen=1
 }
 
-assume_yes=0; minimal=0; want_spoil=1; want_lactase=1; want_matugen=1; with_sddm=0; uninstall=0; dry_run=0
+assume_yes=0; minimal=0; want_spoil=1; want_lactase=1; want_snippy=1; want_matugen=1; with_sddm=0; uninstall=0; dry_run=0
 distro=""
 args=("$@")
 while [ $# -gt 0 ]; do
@@ -91,6 +94,7 @@ while [ $# -gt 0 ]; do
         --minimal)   minimal=1 ;;
         --no-spoil)  want_spoil=0 ;;
         --no-lactase) want_lactase=0 ;;
+        --no-snippy) want_snippy=0 ;;
         --no-matugen) want_matugen=0 ;;
         --with-sddm) with_sddm=1 ;;
         --uninstall) uninstall=1 ;;
@@ -111,7 +115,7 @@ if [ -t 1 ]; then
 else
     B=; D=; G=; Y=; R=; C=; N=
 fi
-step_no=0; step_total=9
+step_no=0; step_total=10
 step() { step_no=$((step_no + 1)); printf '\n%s[%d/%d]%s %s%s%s\n' "$C" "$step_no" "$step_total" "$N" "$B" "$*" "$N"; }
 ok()   { printf '  %s✓%s %s\n' "$G" "$N" "$*"; }
 info() { printf '  %s•%s %s\n' "$D" "$N" "$*"; }
@@ -440,6 +444,7 @@ else
 fi
 SPOIL="$(dirname "$MILK")/spoil"
 LACTASE="$(dirname "$MILK")/lactase"
+SNIPPY="$(dirname "$MILK")/snippy"
 config_dir="${XDG_CONFIG_HOME:-$HOME/.config}/milk"
 config="$config_dir/milk.json"
 
@@ -468,15 +473,15 @@ if [ "$uninstall" -eq 1 ]; then
     printf "$(t '%sRemovendo o milk%s (configurações, dados e os clones continuam no lugar)' \
                 '%sRemoving milk%s (settings, runtime data and the clones stay in place)' \
                 '%sQuitando milk%s (la configuración, los datos y los clones se quedan donde están)')\n" "$B" "$N"
-    ask "$(t "Remover a entrada da tela de login, os comandos milk/spoil/lactase, a fonte de ícones e o Odin/matugen baixados pelo instalador?" \
-             "Remove the login entry, the milk/spoil/lactase commands, the icon font and the Odin/matugen the installer downloaded?" \
-             "¿Quitar la entrada de la pantalla de inicio de sesión, los comandos milk/spoil/lactase, la fuente de iconos y el Odin/matugen que descargó el instalador?")" y || exit 0
+    ask "$(t "Remover a entrada da tela de login, os comandos milk/spoil/lactase/snippy, a fonte de ícones e o Odin/matugen baixados pelo instalador?" \
+             "Remove the login entry, the milk/spoil/lactase/snippy commands, the icon font and the Odin/matugen the installer downloaded?" \
+             "¿Quitar la entrada de la pantalla de inicio de sesión, los comandos milk/spoil/lactase/snippy, la fuente de iconos y el Odin/matugen que descargó el instalador?")" y || exit 0
     sudo "$MILK/contrib/install-sddm-session.sh" --uninstall || true
     if [ -e /usr/share/xsessions/milk.desktop ]; then
         sudo env XSESSIONS_DIR=/usr/share/xsessions "$MILK/contrib/install-sddm-session.sh" --uninstall || true
     fi
     if grep -q 'installed by milk/install.sh' /etc/pam.d/milk 2>/dev/null; then sudo rm -f /etc/pam.d/milk; fi
-    rm -f "${BIN_DIR:?}/milk" "${BIN_DIR:?}/spoil" "${BIN_DIR:?}/lactase"
+    rm -f "${BIN_DIR:?}/milk" "${BIN_DIR:?}/spoil" "${BIN_DIR:?}/lactase" "${BIN_DIR:?}/snippy"
     if our_link odin; then rm -f "${BIN_DIR:?}/odin"; fi
     if our_link matugen; then rm -f "${BIN_DIR:?}/matugen"; fi
     rm -rf "${FONT_DIR:?}" "${DATA_DIR:?}/odin" "${DATA_DIR:?}/bin"
@@ -507,6 +512,11 @@ if [ "$interactive" -eq 1 ]; then
         ask "$(t "lactase, o compositor (sombras, animações, transparência, desfoque, cantos suaves)?" \
                  "lactase, the compositor (shadows, animations, transparency, blur, smooth corners)?" \
                  "¿lactase, el compositor (sombras, animaciones, transparencia, desenfoque, esquinas suaves)?")" y || want_lactase=0
+    fi
+    if [ "$want_snippy" -eq 1 ]; then
+        ask "$(t "snippy, as capturas e gravações de tela (Super+Shift+S), com editor e cópia direto para a área de transferência?" \
+                 "snippy, for screenshots and screen recordings (Super+Shift+S), with an editor and straight-to-clipboard copies?" \
+                 "¿snippy, para capturas y grabaciones de pantalla (Super+Shift+S), con editor y copia directa al portapapeles?")" y || want_snippy=0
     fi
     if [ "$want_matugen" -eq 1 ]; then
         ask "$(t "matugen, para gerar o tema a partir das cores do papel de parede (tema \"Papel de parede\")?" \
@@ -549,6 +559,7 @@ case "$distro" in
         )
         spoil_pkgs=(mpv ffmpegthumbnailer ffmpeg libarchive zip unzip "7zip|p7zip" alacritty)
         lactase_pkgs=(libxcomposite libxdamage libxrender mesa libglvnd)
+        snippy_pkgs=(ffmpeg)
         optional=(alacritty rofi brightnessctl playerctl maim xclip flameshot "?unrar" network-manager-applet
                   adw-gtk-theme qt5ct qt6ct)           # GTK and Qt apps in milk's colours
         odin_pkg=odin; matugen_pkg=matugen ;;
@@ -566,6 +577,7 @@ case "$distro" in
         )
         spoil_pkgs=(mpv ffmpegthumbnailer ffmpeg libarchive-tools zip unzip "7zip|p7zip-full" alacritty)
         lactase_pkgs=(libxcomposite-dev libxdamage-dev libxrender-dev libgl-dev libgl1-mesa-dri)
+        snippy_pkgs=(ffmpeg)
         optional=(alacritty rofi brightnessctl playerctl maim xclip flameshot "?unrar|unrar-free" network-manager-gnome
                   "?qt5ct" "?qt6ct") ;;
     fedora)
@@ -583,6 +595,7 @@ case "$distro" in
         )
         spoil_pkgs=(mpv ffmpegthumbnailer "ffmpeg-free|ffmpeg" bsdtar zip unzip "7zip|p7zip" alacritty)
         lactase_pkgs=(libXcomposite-devel libXdamage-devel libXrender-devel mesa-libGL-devel mesa-dri-drivers)
+        snippy_pkgs=("ffmpeg-free|ffmpeg")
         optional=(alacritty rofi brightnessctl playerctl maim xclip flameshot "?unrar" network-manager-applet
                   "?adw-gtk3-theme" qt5ct qt6ct)
         matugen_pkg=matugen ;;
@@ -601,6 +614,7 @@ case "$distro" in
         )
         spoil_pkgs=(mpv ffmpegthumbnailer "ffmpeg-7|ffmpeg" bsdtar zip unzip "7zip|p7zip" alacritty)
         lactase_pkgs=(libXcomposite-devel libXdamage-devel libXrender-devel Mesa-libGL-devel Mesa-dri)
+        snippy_pkgs=("ffmpeg-7|ffmpeg")
         optional=(alacritty rofi brightnessctl playerctl maim xclip flameshot "?unrar" NetworkManager-applet qt5ct qt6ct) ;;
     void)
         required=(
@@ -616,11 +630,12 @@ case "$distro" in
         )
         spoil_pkgs=(mpv ffmpegthumbnailer ffmpeg bsdtar zip unzip "7zip|p7zip" alacritty)
         lactase_pkgs=(libXcomposite-devel libXdamage-devel libXrender-devel MesaLib-devel libglvnd-devel mesa-dri)
+        snippy_pkgs=(ffmpeg)
         optional=(alacritty rofi brightnessctl playerctl maim xclip flameshot "?unrar" network-manager-applet qt5ct qt6ct)
         matugen_pkg=matugen
         services=(dbus elogind NetworkManager bluetooth) ;;
     *)
-        required=(); spoil_pkgs=(); lactase_pkgs=(); optional=(); services=() ;;
+        required=(); spoil_pkgs=(); lactase_pkgs=(); snippy_pkgs=(); optional=(); services=() ;;
 esac
 
 # Odin from the repositories only when the installed one is missing or too old
@@ -633,6 +648,7 @@ if [ "$want_matugen" -eq 1 ] && ! command -v matugen >/dev/null; then need_matug
 packages=("${required[@]}")
 [ "$want_spoil" -eq 1 ] && packages+=("${spoil_pkgs[@]}")
 [ "$want_lactase" -eq 1 ] && packages+=("${lactase_pkgs[@]}")
+[ "$want_snippy" -eq 1 ] && packages+=("${snippy_pkgs[@]}")
 [ "$minimal" -eq 0 ] && packages+=("${optional[@]}")
 [ "$with_sddm" -eq 1 ] && packages+=(sddm)
 [ "$need_odin" -eq 1 ] && [ -n "$odin_pkg" ] && packages+=("?$odin_pkg")
@@ -670,6 +686,7 @@ case "$lang" in pt) milk_locale=pt-BR; lang_name="Português" ;; es) milk_locale
 parts="milk"
 [ "$want_spoil" -eq 1 ] && parts+=" + Spoil"
 [ "$want_lactase" -eq 1 ] && parts+=" + lactase"
+[ "$want_snippy" -eq 1 ] && parts+=" + snippy"
 [ "$want_matugen" -eq 1 ] && parts+=" + matugen"
 
 printf '\n%s%s%s\n' "$B" "$(t "Plano" "Plan" "Plan")" "$N"
@@ -690,9 +707,12 @@ if [ "$distro" = other ]; then
              "of libX11, libXft, libXrandr, libXfixes, libXext, fontconfig, freetype, zlib and dbus;" \
              "de libX11, libXft, libXrandr, libXfixes, libXext, fontconfig, freetype, zlib y dbus;")" \
         "feh, rsvg-convert, ImageMagick, xdg-user-dirs, xdg-utils, notify-send, gio, PipeWire + wireplumber," \
-        "$(t "NetworkManager, BlueZ e as fontes Noto; para o lactase, libXcomposite, libXdamage, libXrender e libGL." \
-             "NetworkManager, BlueZ and the Noto fonts; for lactase, libXcomposite, libXdamage, libXrender and libGL." \
-             "NetworkManager, BlueZ y las fuentes Noto; para lactase, libXcomposite, libXdamage, libXrender y libGL.")"
+        "$(t "NetworkManager, BlueZ e as fontes Noto; para o lactase, libXcomposite, libXdamage, libXrender e libGL;" \
+             "NetworkManager, BlueZ and the Noto fonts; for lactase, libXcomposite, libXdamage, libXrender and libGL;" \
+             "NetworkManager, BlueZ y las fuentes Noto; para lactase, libXcomposite, libXdamage, libXrender y libGL;")" \
+        "$(t "para gravar a tela com o snippy, ffmpeg com x11grab." \
+             "for snippy's screen recording, ffmpeg with x11grab." \
+             "para grabar la pantalla con snippy, ffmpeg con x11grab.")"
 elif [ ${#missing[@]} -eq 0 ]; then
     info "$(t "todos os ${#resolved[@]} pacotes já estão instalados" "all ${#resolved[@]} packages are already installed" "los ${#resolved[@]} paquetes ya están instalados")"
 elif [ ${#missing[@]} -eq 1 ]; then
@@ -948,14 +968,41 @@ if [ "$want_lactase" -eq 1 ]; then
 else
     info "$(t "ignorado" "skipped" "omitido")"
 fi
+
+# --- 8. snippy ----------------------------------------------------------------------------------
+step "snippy"
+if [ "$want_snippy" -eq 1 ]; then
+    if [ ! -d "$SNIPPY" ]; then
+        info "$(t "clonando $SNIPPY_URL em $SNIPPY" "cloning $SNIPPY_URL into $SNIPPY" "clonando $SNIPPY_URL en $SNIPPY")"
+        git clone --depth 1 "$SNIPPY_URL" "$SNIPPY" || warn "$(t "Não foi possível clonar o snippy; Super+Shift+S usará o flameshot ou o maim" \
+                                                                "Could not clone snippy; Super+Shift+S will use flameshot or maim" \
+                                                                "No se pudo clonar snippy; Super+Shift+S usará flameshot o maim")"
+    elif [ -d "$SNIPPY/.git" ]; then
+        git -C "$SNIPPY" pull --ff-only >/dev/null 2>&1 || warn "$(t "Não foi possível atualizar o snippy (alterações locais?); compilando o que existe" \
+                                                                  "Could not update snippy (local changes?); building what is there" \
+                                                                  "No se pudo actualizar snippy (¿cambios locales?); se compila lo que hay")"
+    fi
+    if [ -x "$SNIPPY/build.sh" ]; then
+        MILK_SRC="$MILK/src" "$SNIPPY/build.sh" | sed 's/^/  /'
+        ln -sfn "$SNIPPY/snippy" "$HOME/.local/bin/snippy"
+        ok "$(t "Comando: snippy (Super+Shift+S)" "Command: snippy (Super+Shift+S)" "Comando: snippy (Super+Shift+S)")"
+    elif [ -d "$SNIPPY" ]; then
+        # A folder of that name that is not snippy's clone: say so instead of skipping quietly.
+        warn "$(t "$SNIPPY existe mas não tem o snippy (falta build.sh); apague ou renomeie a pasta e rode o instalador de novo" \
+                  "$SNIPPY exists but does not hold snippy (no build.sh); remove or rename it and run the installer again" \
+                  "$SNIPPY existe pero no contiene snippy (falta build.sh); bórrala o cámbiale el nombre y vuelve a ejecutar el instalador")"
+    fi
+else
+    info "$(t "ignorado" "skipped" "omitido")"
+fi
 case ":$user_path:" in
     *":$BIN_DIR:"*) ;;
-    *) warn "$(t "~/.local/bin não está no seu PATH; adicione-o para usar os comandos milk, spoil e lactase" \
-                 "~/.local/bin is not in your PATH; add it to use the milk, spoil and lactase commands" \
-                 "~/.local/bin no está en tu PATH; añádelo para usar los comandos milk, spoil y lactase")" ;;
+    *) warn "$(t "~/.local/bin não está no seu PATH; adicione-o para usar os comandos milk, spoil, lactase e snippy" \
+                 "~/.local/bin is not in your PATH; add it to use the milk, spoil, lactase and snippy commands" \
+                 "~/.local/bin no está en tu PATH; añádelo para usar los comandos milk, spoil, lactase y snippy")" ;;
 esac
 
-# --- 8. terminal theme --------------------------------------------------------------------------
+# --- 9. terminal theme --------------------------------------------------------------------------
 step "$(t "Tema do terminal" "Terminal theme" "Tema de la terminal")"
 alacritty_dir="${XDG_CONFIG_HOME:-$HOME/.config}/alacritty"
 if [ ! -f "$alacritty_dir/milk.toml" ]; then
@@ -970,7 +1017,7 @@ else
     ok "$(t "O Alacritty já tem o tema do milk" "Alacritty already themed for milk" "Alacritty ya tiene el tema de milk")"
 fi
 
-# --- 9. login screen ------------------------------------------------------------------------------
+# --- 10. login screen -----------------------------------------------------------------------------
 step "$(t "Tela de login" "Login screen" "Pantalla de inicio de sesión")"
 sudo env XSESSIONS_DIR="$xsessions_dir" "$MILK/contrib/install-sddm-session.sh" | sed 's/^/  /'
 # A single entry: SDDM would list a copy from each folder.
@@ -1025,7 +1072,7 @@ else
         echo
     fi
 fi
-t "  Depois: \"milk settings\" ou a engrenagem da barra; Super+E abre o Spoil." \
-  "  Later: \"milk settings\" or the gear on the bar; Super+E opens Spoil." \
-  "  Después: \"milk settings\" o el engranaje de la barra; Super+E abre Spoil."
+t "  Depois: \"milk settings\" ou a engrenagem da barra; Super+E abre o Spoil; Super+Shift+S, as capturas." \
+  "  Later: \"milk settings\" or the gear on the bar; Super+E opens Spoil; Super+Shift+S takes screenshots." \
+  "  Después: \"milk settings\" o el engranaje de la barra; Super+E abre Spoil; Super+Shift+S, las capturas."
 echo

@@ -18,7 +18,7 @@ cd milk
 
 the installer recognises your distribution (if it can't, it asks you to pick one; `--distro` forces it), asks what you want, installs every dependency with your package manager and downloads the Odin compiler when your distribution has no recent one. 
 
-it also sets up [Spoil](https://github.com/mirvoxtm/spoil), the file manager and [lactase](https://github.com/mirvoxtm/lactase), the compositor (shadows, animations, transparency, blur and smooth corners).
+it also sets up [Spoil](https://github.com/mirvoxtm/spoil), the file manager, [lactase](https://github.com/mirvoxtm/lactase), the compositor (shadows, animations, transparency, blur and smooth corners) and [snippy](https://github.com/mirvoxtm/snippy), the screenshot and screen recording tool (super+shift+s). each one is a question in the installer (or `--no-spoil`, `--no-lactase`, `--no-snippy`).
 
 other goodies are optional but *highly* recommended to install and are automatically downloaded upon using the install script, my recommendation is defaulting to "yes" on the installer for the best experience.
 
@@ -85,7 +85,7 @@ a script widget is a command whose output shows on the bar - polybar's `custom/s
 
 ## updating
 
-`milk update` pulls milk, spoil and lactase, rebuilds them and restarts milk in place - your windows stay open. the same lives in settings → about → update milk. `milk update check` only tells you whether there's something new.
+`milk update` pulls milk, spoil, lactase and snippy, rebuilds them and restarts milk in place - your windows stay open. the same lives in settings → about → update milk. `milk update check` only tells you whether there's something new.
 
 `milk doctor` checks your installation and tells you how to fix whatever is missing.
 

@@ -1,5 +1,5 @@
-// `milk update`: pull the milk clone and, next to it, Spoil's and lactase's,
-// rebuild the three and restart the running milk in place, and `milk
+// `milk update`: pull the milk clone and, next to it, Spoil's, lactase's and
+// snippy's, rebuild them all and restart the running milk in place, and `milk
 // restart`, which is that last step alone.
 //
 // Restarting in place: the running milk (usually the login session's
@@ -186,7 +186,7 @@ cmd_update :: proc(opts: ^Options) -> int {
 	Repo :: struct { name, dir: string }
 	repos := make([dynamic]Repo, context.temp_allocator)
 	append(&repos, Repo{"milk", clone})
-	for name in ([]string{"spoil", "lactase"}) {
+	for name in ([]string{"spoil", "lactase", "snippy"}) {
 		dir := join({parent, name})
 		if os.is_dir(join({dir, ".git"})) { append(&repos, Repo{name, dir}) }
 	}

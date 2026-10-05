@@ -1,9 +1,16 @@
 #!/bin/sh
 # Region screenshot for milk (Super+Shift+S).
-# Uses the first tool available: flameshot (its own editor), maim, scrot, or
+# Uses the first tool available: snippy (milk's own: the snip toolbar, the
+# clipboard, the editor and screen recording; pressed again while recording,
+# it stops the recording), flameshot (its own editor), maim, scrot, or
 # ImageMagick's `import` (drag a rectangle; a plain click takes that window).
-# Saved to <Pictures>/Screenshots and copied to the clipboard (flameshot copies
-# by itself; the other tools need xclip).
+# Saved to <Pictures>/Screenshots and copied to the clipboard (snippy and
+# flameshot copy by themselves; the other tools need xclip).
+here=$(dirname "$(readlink -f "$0")")
+for snippy in "$(command -v snippy 2>/dev/null)" "$here/../../snippy/snippy"; do
+    [ -n "$snippy" ] && [ -x "$snippy" ] && exec "$snippy" snip
+done
+
 pictures=$(xdg-user-dir PICTURES 2>/dev/null)
 [ -n "$pictures" ] || pictures="$HOME/Pictures"
 dir="$pictures/Screenshots"

@@ -295,6 +295,17 @@ cmd_doctor :: proc(opts: ^Options) -> int {
 	} else {
 		say(&dr, "warn", "Spoil is not installed — Super+E opens another file manager", "run ./install.sh to add it")
 	}
+	// contrib/milk-screenshot finds snippy on the PATH or next to the clone.
+	snippy, have_snippy := find_in_path("snippy")
+	if !have_snippy && clone != "" {
+		snippy = join({filepath.dir(clone), "snippy", "snippy"})
+		have_snippy = is_executable(snippy)
+	}
+	if have_snippy {
+		say(&dr, "ok", fmt.tprintf("snippy — screenshots and screen recording (%s)", snippy))
+	} else {
+		say(&dr, "warn", "snippy is not installed — Super+Shift+S uses flameshot, maim or scrot", "run ./install.sh to add it")
+	}
 
 	// --- fonts -------------------------------------------------------------------------
 	section(&dr, "Fonts")
@@ -393,7 +404,7 @@ cmd_doctor :: proc(opts: ^Options) -> int {
 	if strings.contains(fmt.tprintf(":%s:", path_env), fmt.tprintf(":%s:", local_bin)) {
 		say(&dr, "ok", "~/.local/bin is in PATH")
 	} else {
-		say(&dr, "warn", "~/.local/bin is not in PATH: the milk, spoil and lactase commands are not found in terminals",
+		say(&dr, "warn", "~/.local/bin is not in PATH: the milk, spoil, lactase and snippy commands are not found in terminals",
 		    "add it in your shell's profile (the milk session adds it for itself)")
 	}
 	if bus, found := os.lookup_env("DBUS_SESSION_BUS_ADDRESS", context.temp_allocator); found && bus != "" {
