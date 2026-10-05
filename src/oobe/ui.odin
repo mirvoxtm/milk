@@ -38,6 +38,7 @@ Icon :: enum {
 	Settings, Power, Box_Multiple,
 	Lock, // settings → lock.odin
 	Arrow_Back_Up, X, // settings → shortcuts.odin
+	Code, // settings → bar → scripts (barscripts.odin)
 }
 
 // Tabler codepoints (the font the bar uses; see /usr/share/noctalia/assets/fonts/tabler.json).
@@ -52,7 +53,7 @@ ICON_CODES := [Icon]rune{
 	.Arrow_Up = 0xEA25, .Arrow_Down = 0xEA16, .Layout_Dashboard = 0xF02C, .Player_Play = 0xED46, .Space = 0xEC0C,
 	.Wifi = 0xEB52, .Bluetooth = 0xEA37, .Volume = 0xEB51, .Battery = 0xEA31, .Calendar = 0xEA53, .Clock = 0xEA70,
 	.Settings = 0xEB20, .Power = 0xEB0D, .Box_Multiple = 0xEE17, .Lock = 0xEAE2,
-	.Arrow_Back_Up = 0xEB77, .X = 0xEB55,
+	.Arrow_Back_Up = 0xEB77, .X = 0xEB55, .Code = 0xEA77,
 }
 
 foreign import xft_clip "system:Xft"

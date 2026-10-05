@@ -121,6 +121,51 @@ Bar_Options :: struct {
 	style:                 string,   // full (edge to edge) | floating (margins, rounded corners)
 	margin:                int,      // floating: gap to the screen edges, pixels
 	radius:                int,      // floating: corner radius, pixels
+	scripts:               []Bar_Script, // bar.scripts, sorted by name; placed as "script:<name>"
+}
+
+// A bar widget fed by a command, like polybar's custom/script: what the
+// command prints is the widget's text (or a JSON line {"text", "icon",
+// "state"}), refreshed `interval` seconds after each run, or line by line
+// while a `tail` command keeps running. Placed in bar.start/center/end as
+// "script:<name>".
+Bar_Script :: struct {
+	name:            string,
+	exec:            string, // run with sh -c
+	interval:        f64,    // seconds between runs; tail: before restarting a command that ended
+	tail:            bool,   // the command keeps running and every line it prints replaces the text
+	icon:            string, // a Tabler icon name or "U+XXXX", "" = none
+	on_click:        string, // shell commands for the mouse; "%pid%" is the tail command's process
+	on_middle_click: string,
+	on_right_click:  string,
+	on_scroll_up:    string,
+	on_scroll_down:  string,
+	max_width:       int,    // pixels of text before it is cut, 0 = bar.titleMaxWidth
+}
+
+SCRIPT_WIDGET_PREFIX    :: "script:"
+SCRIPT_NAME_MAX         :: 40 // bytes
+SCRIPT_INTERVAL_DEFAULT :: 5.0
+SCRIPT_INTERVAL_MIN     :: 0.5
+
+// A bar.scripts key: 1 to SCRIPT_NAME_MAX bytes, no control characters, no
+// leading or trailing spaces.
+valid_script_name :: proc(name: string) -> bool {
+	if name == "" || len(name) > SCRIPT_NAME_MAX || strings.trim_space(name) != name { return false }
+	for r in name { if r < 0x20 || r == 0x7f { return false } }
+	return true
+}
+
+// The script a widget id names ("script:clima" → "clima").
+script_widget_name :: proc(id: string) -> (string, bool) {
+	if !strings.has_prefix(id, SCRIPT_WIDGET_PREFIX) { return "", false }
+	return id[len(SCRIPT_WIDGET_PREFIX):], true
+}
+
+find_script :: proc(cfg: ^Config, name: string) -> (^Bar_Script, bool) {
+	if cfg == nil { return nil, false }
+	for &s in cfg.bar.scripts { if s.name == name { return &s, true } }
+	return nil, false
 }
 
 BAR_STYLES :: []string{"full", "floating"}
@@ -766,7 +811,8 @@ parse_bar :: proc(l: ^Loader, root: json.Object, out: ^Bar_Options) -> bool {
 	reject_unknown(l, section, {"enabled", "height", "position", "monitor", "overrideRedirect", "opacity", "font", "fontSize",
 	                            "iconFontFile", "iconFont", "iconSize", "theme", "start", "center", "end", "commands",
 	                            "launcherIcon", "dateFormat", "clockFormat", "locale", "mediaIdleText", "titleMaxWidth",
-	                            "showEmptyWorkspaces", "workspaceIcons", "spacing", "spacerWidth", "style", "margin", "radius"}, "bar") or_return
+	                            "showEmptyWorkspaces", "workspaceIcons", "spacing", "spacerWidth", "style", "margin", "radius",
+	                            "scripts"}, "bar") or_return
 	out.enabled = get_bool(l, section, "enabled", "bar", d.enabled) or_return
 	h := get_number(l, section, "height", "bar", f64(d.height), 16, 200) or_return
 	out.height = int(h)
@@ -790,9 +836,10 @@ parse_bar :: proc(l: ^Loader, root: json.Object, out: ^Bar_Options) -> bool {
 	out.theme.accent_foreground = get_string(l, theme, "accentForeground", "bar.theme", d.theme.accent_foreground) or_return
 	out.theme.surface = get_string(l, theme, "surface", "bar.theme", d.theme.surface) or_return
 	out.theme.warning = get_string(l, theme, "warning", "bar.theme", d.theme.warning) or_return
-	out.start = get_string_list(l, section, "start", "bar", d.start, BAR_WIDGETS) or_return
-	out.center = get_string_list(l, section, "center", "bar", d.center, BAR_WIDGETS) or_return
-	out.end = get_string_list(l, section, "end", "bar", d.end, BAR_WIDGETS) or_return
+	parse_bar_scripts(l, section, out) or_return
+	out.start = get_widget_list(l, section, "start", d.start, out.scripts) or_return
+	out.center = get_widget_list(l, section, "center", d.center, out.scripts) or_return
+	out.end = get_widget_list(l, section, "end", d.end, out.scripts) or_return
 	commands := get_object(l, section, "commands", "bar") or_return
 	for key, value in commands {
 		s, is_str := value.(string)
@@ -819,6 +866,91 @@ parse_bar :: proc(l: ^Loader, root: json.Object, out: ^Bar_Options) -> bool {
 	rd := get_number(l, section, "radius", "bar", f64(d.radius), 0, 100) or_return
 	out.radius = int(rd)
 	return true
+}
+
+// bar.start/center/end: built-in widget ids and "script:<name>" of bar.scripts.
+@(private)
+get_widget_list :: proc(l: ^Loader, obj: json.Object, key: string, default_value: []string, scripts: []Bar_Script) -> ([]string, bool) {
+	list, ok := get_string_list(l, obj, key, "bar", default_value)
+	if !ok { return nil, false }
+	for id in list {
+		known := false
+		if name, is_script := script_widget_name(id); is_script {
+			for s in scripts { if s.name == name { known = true; break } }
+			if !known { ok = fail(l, "bar.%s: there is no script %q in bar.scripts", key, name) }
+		} else {
+			for c in BAR_WIDGETS { if c == id { known = true; break } }
+			if !known {
+				ok = fail(l, "bar.%s: unknown widget %q (valid: %s, or script:<name> of bar.scripts)", key, id,
+				          strings.join(BAR_WIDGETS, ", ", context.temp_allocator))
+			}
+		}
+		if !ok { break }
+	}
+	if !ok {
+		for id in list { delete(id) }
+		delete(list)
+		return nil, false
+	}
+	return list, true
+}
+
+@(private)
+parse_bar_scripts :: proc(l: ^Loader, section: json.Object, out: ^Bar_Options) -> bool {
+	obj := get_object(l, section, "scripts", "bar") or_return
+	list := make([]Bar_Script, len(obj))
+	out.scripts = list[:0]
+	n := 0
+	for name, v in obj {
+		scope := fmt.tprintf("bar.scripts.%s", name)
+		if !valid_script_name(name) {
+			return fail(l, "%s: a script name must have 1 to %d characters, without control characters or leading or trailing spaces.",
+			            scope, SCRIPT_NAME_MAX)
+		}
+		so, is_obj := v.(json.Object)
+		if !is_obj { return fail(l, "%s must be an object.", scope) }
+		reject_unknown(l, so, {"exec", "interval", "tail", "icon", "onClick", "onMiddleClick", "onRightClick", "onScrollUp",
+		                       "onScrollDown", "maxWidth"}, scope) or_return
+		if "exec" not_in so { return fail(l, "%s.exec is missing: the command whose output the widget shows.", scope) }
+		sc := &list[n]
+		sc.name = strings.clone(name)
+		n += 1
+		out.scripts = list[:n]
+		sc.exec = get_string(l, so, "exec", scope, "") or_return
+		sc.interval = get_number(l, so, "interval", scope, SCRIPT_INTERVAL_DEFAULT, SCRIPT_INTERVAL_MIN, 86400) or_return
+		sc.tail = get_bool(l, so, "tail", scope, false) or_return
+		sc.icon = get_text(l, so, "icon", scope) or_return
+		sc.on_click = get_text(l, so, "onClick", scope) or_return
+		sc.on_middle_click = get_text(l, so, "onMiddleClick", scope) or_return
+		sc.on_right_click = get_text(l, so, "onRightClick", scope) or_return
+		sc.on_scroll_up = get_text(l, so, "onScrollUp", scope) or_return
+		sc.on_scroll_down = get_text(l, so, "onScrollDown", scope) or_return
+		mw := get_number(l, so, "maxWidth", scope, 0, 0, 4000) or_return
+		sc.max_width = int(mw)
+	}
+	// Map order is arbitrary: keep the scripts sorted by name.
+	scripts := out.scripts
+	for i in 1 ..< len(scripts) {
+		for j := i; j > 0 && scripts[j].name < scripts[j - 1].name; j -= 1 { scripts[j], scripts[j - 1] = scripts[j - 1], scripts[j] }
+	}
+	return true
+}
+
+// An optional string ("" when absent or null), trimmed.
+@(private)
+get_text :: proc(l: ^Loader, obj: json.Object, key, scope: string) -> (string, bool) {
+	v, present := obj[key]
+	if !present { return "", true }
+	if _, is_null := v.(json.Null); is_null { return "", true }
+	s, ok := v.(string)
+	if !ok { return "", fail(l, "%s.%s must be a string.", scope, key) }
+	return strings.clone(strings.trim_space(s)), true
+}
+
+destroy_bar_script :: proc(s: ^Bar_Script) {
+	delete(s.name); delete(s.exec); delete(s.icon)
+	delete(s.on_click); delete(s.on_middle_click); delete(s.on_right_click); delete(s.on_scroll_up); delete(s.on_scroll_down)
+	s^ = {}
 }
 
 @(private)
@@ -1331,6 +1463,8 @@ destroy :: proc(cfg: ^Config) {
 	for s in b.end { delete(s) }; delete(b.end)
 	for k, v in b.commands { delete(k); delete(v) }
 	delete(b.commands)
+	for &s in b.scripts { destroy_bar_script(&s) }
+	delete(b.scripts)
 	delete(b.launcher_icon); delete(b.date_format); delete(b.clock_format); delete(b.locale); delete(b.media_idle_text)
 	delete(b.style)
 	delete(cfg.appearance.theme); delete(cfg.appearance.variant); delete(cfg.appearance.matugen_scheme); delete(cfg.notifications.position)

@@ -107,6 +107,9 @@ Bar :: struct {
 	vol:             Volume_State,
 	date_text:       string,
 	clock_text:      string,
+	scripts:         [dynamic]Script_State, // per bar.scripts, same order (scripts.odin)
+	tabler_names:    map[string]rune,       // every Tabler icon name, for the icons scripts name (icons.odin)
+	tabler_names_file: string,              // the icon font the names belong to (owned)
 
 	// Timers
 	next_poll:       f64,
@@ -205,6 +208,7 @@ destroy :: proc(b: ^Bar) {
 	bt_destroy(b)
 	osd_destroy(b)
 	delete(b.config_path)
+	scripts_destroy(b)
 	kill_jobs(b)
 	b.media.stream = nil
 	reap_children(b)
@@ -226,6 +230,7 @@ destroy :: proc(b: ^Bar) {
 	delete(b.bright.device)
 	delete(b.date_text)
 	delete(b.clock_text)
+	free_tabler_names(b)
 	for id in b.unsupported { delete(id) }
 	delete(b.unsupported)
 	free(b)
@@ -315,6 +320,7 @@ tick :: proc(b: ^Bar, now: f64) {
 	reap_children(b)
 	service_jobs(b, now)
 	media_tick(b, now)
+	scripts_tick(b, now)
 	if b.tray.t != nil { // milk tray
 		tray.tick(b.tray.t, now)
 		if tray.take_changed(b.tray.t) { b.dirty = true }
@@ -358,10 +364,13 @@ next_timeout :: proc(b: ^Bar, now: f64) -> f64 {
 	if (b.dirty && b.mapped) || b.occupancy_dirty || b.wm_dirty || b.tasks.stale || b.tasks.recheck { return 0 }
 	deadline := min(b.next_poll, b.next_clock)
 	if d := media_deadline(b); d >= 0 { deadline = min(deadline, d) }
+	if d := scripts_deadline(b); d >= 0 { deadline = min(deadline, d) }
 	if b.popup_wait >= 0 { deadline = min(deadline, now + b.popup_wait) }
 	for job in b.jobs {
 		if job.file == nil {
-			deadline = min(deadline, now + 0.05) // output done, waiting for the exit
+			// Output done, waiting for the exit; a click's command may be a
+			// program that stays open, checked once a second after a while.
+			deadline = min(deadline, now + (job.kind == .Script_Action && now - job.started > 2 ? 1 : 0.05))
 		} else if job.timeout > 0 {
 			deadline = min(deadline, job.started + job.timeout)
 		}
@@ -497,6 +506,7 @@ apply_config :: proc(b: ^Bar) -> bool {
 	b.text_baseline = (i32(opts.height) - i32(ext.height)) / 2 + i32(ext.y)
 	resolve_icons(b)
 	load_launcher(b)
+	scripts_configure(b)
 	build_widgets(b)
 	tasks_configure(b)
 	tray_configure(b) // milk tray
@@ -511,6 +521,7 @@ release_look :: proc(b: ^Bar) {
 	destroy_icons(b)
 	if b.has_launcher { tx.image_destroy(&b.launcher) }
 	b.has_launcher = false
+	scripts_forget_glyphs(b) // their fonts close below
 	if b.logo_font != nil { tx.font_close(b.c, b.logo_font) }
 	b.logo_font = nil
 	b.logo_text = ""

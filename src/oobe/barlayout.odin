@@ -1,10 +1,12 @@
-// Settings → Barra: the tabs of the section (style, layout presets, widgets),
-// the layout presets with a preview of each bar, and the widget editor that
-// rewrites bar.start / bar.center / bar.end.
+// Settings → Barra: the tabs of the section (style, layout presets, widgets,
+// scripts), the layout presets with a preview of each bar, and the widget
+// editor that rewrites bar.start / bar.center / bar.end. The user's script
+// widgets (barscripts.odin) are entries of the editor like the built-in ones.
 package oobe
 
 import "core:encoding/json"
 import "core:fmt"
+import config "../config"
 import tx "../tx"
 
 // The widgets the bar draws (bar/layout.odin), as the editor lists them.
@@ -69,7 +71,7 @@ BAR_LAYOUT_PRESETS := []Bar_Layout_Preset{
 @(private)
 Layout_Editor :: struct {
 	loaded:   bool,
-	zones:    [3][dynamic]int, // start, center, end: indexes into BAR_WIDGET_INFO
+	zones:    [3][dynamic]int, // start, center, end: indexes into BAR_WIDGET_INFO, or SCRIPT_ENTRY + a script
 	sel_zone: int,             // 0..2 a zone, 3 the available widgets
 	sel:      int,             // row in that list, -1 = nothing selected
 	dirty:    bool,            // write bar.start/center/end on the next save
@@ -88,8 +90,13 @@ lay_load :: proc(w: ^Wizard) {
 	if lay.loaded { return }
 	lay.loaded = true
 	lay.sel = -1
+	scripts_load(w)
 	for ids, z in ([3][]string{w.cfg.bar.start, w.cfg.bar.center, w.cfg.bar.end}) {
 		for id in ids {
+			if name, is_script := config.script_widget_name(id); is_script {
+				if k := script_list_index(w, name); k >= 0 { append(&lay.zones[z], SCRIPT_ENTRY + k) }
+				continue
+			}
 			// Ids the bar does not draw ("recorder") are dropped.
 			if i := widget_index(id); i >= 0 { append(&lay.zones[z], i) }
 		}
@@ -101,18 +108,21 @@ lay_destroy :: proc(w: ^Wizard) {
 	for &z in w.set.lay.zones { delete(z) }
 }
 
-// Widgets not on the bar yet (the spacer always).
+// Widgets not on the bar yet (the spacer always), then the scripts not on it.
 @(private)
 lay_available :: proc(w: ^Wizard) -> []int {
 	out := make([dynamic]int, context.temp_allocator)
-	for _, i in BAR_WIDGET_INFO {
-		used := false
-		if i != SPACER_WIDGET {
-			for z in w.set.lay.zones {
-				for v in z { if v == i { used = true } }
-			}
+	on_bar :: proc(w: ^Wizard, entry: int) -> bool {
+		for z in w.set.lay.zones {
+			for v in z { if v == entry { return true } }
 		}
-		if !used { append(&out, i) }
+		return false
+	}
+	for _, i in BAR_WIDGET_INFO {
+		if i == SPACER_WIDGET || !on_bar(w, i) { append(&out, i) }
+	}
+	for _, k in w.set.scr.list {
+		if !on_bar(w, SCRIPT_ENTRY + k) { append(&out, SCRIPT_ENTRY + k) }
 	}
 	return out[:]
 }
@@ -120,7 +130,9 @@ lay_available :: proc(w: ^Wizard) -> []int {
 @(private)
 lay_json :: proc(w: ^Wizard, zone: int) -> json.Array {
 	arr := make(json.Array, 0, len(w.set.lay.zones[zone]), context.temp_allocator)
-	for i in w.set.lay.zones[zone] { append(&arr, json.String(BAR_WIDGET_INFO[i].id)) }
+	for v in w.set.lay.zones[zone] {
+		if id := lay_entry_id(w, v); id != "" { append(&arr, json.String(id)) }
+	}
 	return arr
 }
 
@@ -129,7 +141,7 @@ preset_matches :: proc(w: ^Wizard, p: Bar_Layout_Preset) -> bool {
 	for ids, z in ([3][]string{p.start, p.center, p.end}) {
 		zone := w.set.lay.zones[z]
 		if len(ids) != len(zone) { return false }
-		for id, k in ids { if BAR_WIDGET_INFO[zone[k]].id != id { return false } }
+		for id, k in ids { if lay_entry_id(w, zone[k]) != id { return false } }
 	}
 	if p.position != "" && (p.position == "top") != w.bar_top { return false }
 	if p.style != "" && (p.style == "floating") != w.bar_floating { return false }
@@ -167,7 +179,8 @@ layout_action :: proc(w: ^Wizard, action: Action, arg: int) {
 	lay := &s.lay
 	#partial switch action {
 	case .Bar_Tab:
-		s.bar_tab = clamp(arg, 0, 2)
+		s.bar_tab = clamp(arg, 0, 3)
+		if s.bar_tab != 3 && s.scr.ed.open { scr_close(w) } // leaving the tab drops the unsaved script
 		w.hover = {}
 	case .Bar_Preset:
 		lay_apply_preset(w, arg)
@@ -226,8 +239,9 @@ layout_action :: proc(w: ^Wizard, action: Action, arg: int) {
 @(private)
 draw_bar_tabs :: proc(w: ^Wizard, cv: ^tx.Canvas, c: tx.Rect) -> tx.Rect {
 	lay_load(w)
-	segmented(w, cv, {c.x, c.y, min(i32(460), c.w), 40}, {tr(w, "Estilo", "Style"), tr(w, "Modelos", "Layouts"), tr(w, "Widgets", "Widgets")},
-	          {.Layout_Top, .Layout_Dashboard, .Apps}, w.set.bar_tab, .Bar_Tab)
+	segmented(w, cv, {c.x, c.y, min(i32(600), c.w), 40},
+	          {tr(w, "Estilo", "Style"), tr(w, "Modelos", "Layouts"), tr(w, "Widgets", "Widgets"), tr(w, "Scripts", "Scripts")},
+	          {.Layout_Top, .Layout_Dashboard, .Apps, .Code}, w.set.bar_tab, .Bar_Tab)
 	return {c.x, c.y + 54, c.w, c.h - 54}
 }
 
@@ -247,6 +261,9 @@ draw_bar_strip :: proc(w: ^Wizard, cv: ^tx.Canvas, r: tx.Rect, zones: [3][]int, 
 	title := tr(w, "Terminal", "Terminal")
 	song := tr(w, "Música", "Music")
 	width_of :: proc(w: ^Wizard, id: string, m: Strip_Mode, title, song: string) -> i32 {
+		if name, is_script := config.script_widget_name(id); is_script {
+			return m.titles ? m.slot + 2 + text_width(w, w.f_small, ellipsize(w, w.f_small, name, 90)) : m.slot
+		}
 		switch id {
 		case "spacer":        return m.gap == 1 ? 4 : 8
 		case "workspaces":    return m.gap == 1 ? 34 : 44
@@ -266,7 +283,7 @@ draw_bar_strip :: proc(w: ^Wizard, cv: ^tx.Canvas, r: tx.Rect, zones: [3][]int, 
 		for z, k in zones {
 			for i, n in z {
 				if n > 0 { widths[k] += m.gap }
-				widths[k] += width_of(w, BAR_WIDGET_INFO[i].id, m, title, song)
+				widths[k] += width_of(w, lay_entry_id(w, i), m, title, song)
 			}
 		}
 		if widths[0] + widths[1] + widths[2] + 4 * 5 + 20 <= r.w { break }
@@ -282,6 +299,17 @@ draw_bar_strip :: proc(w: ^Wizard, cv: ^tx.Canvas, r: tx.Rect, zones: [3][]int, 
 		}
 		for i, n in z {
 			if n > 0 { x += m.gap }
+			if i >= SCRIPT_ENTRY {
+				// A script widget: its icon and, in the roomier modes, its name.
+				id := lay_entry_id(w, i)
+				ww := width_of(w, id, m, title, song)
+				draw_entry_icon(w, {r.x + x, r.y, slot, r.h}, i, mix(th.fg, th.muted, 0.15), r)
+				if m.titles {
+					text(w, w.f_small, r.x + x + slot + 2, r.y, r.h, ellipsize(w, w.f_small, lay_entry_label(w, i), 90), th.fg, r)
+				}
+				x += ww
+				continue
+			}
 			info := BAR_WIDGET_INFO[i]
 			ww := width_of(w, info.id, m, title, song)
 			win := tx.Rect{r.x + x, r.y, ww, r.h}
@@ -421,9 +449,8 @@ draw_widget_editor :: proc(w: ^Wizard, cv: ^tx.Canvas, c: tx.Rect) {
 			}
 			fg := sel ? th.accent_fg : th.fg
 			win := tx.Rect{lr.x + row.x, lr.y + row.y, row.w, row.h}
-			info := BAR_WIDGET_INFO[v]
-			icon(w, w.f_icon_small, {win.x + 6, win.y, 22, win.h}, info.icon, sel ? th.accent_fg : mix(th.fg, th.muted, 0.3), lr)
-			text(w, w.f_body, win.x + 34, win.y, win.h, ellipsize(w, w.f_body, tr(w, info.pt, info.en), win.w - 40), fg, lr)
+			draw_entry_icon(w, {win.x + 6, win.y, 22, win.h}, v, sel ? th.accent_fg : mix(th.fg, th.muted, 0.3), lr)
+			text(w, w.f_body, win.x + 34, win.y, win.h, ellipsize(w, w.f_body, lay_entry_label(w, v), win.w - 40), fg, lr)
 			add_hit(w, win, .Lw_Select, arg, lr)
 		}
 		if len(items) == 0 {
@@ -439,8 +466,7 @@ draw_widget_editor :: proc(w: ^Wizard, cv: ^tx.Canvas, c: tx.Rect) {
 		text(w, w.f_small, x, ty, toolbar_h, ellipsize(w, w.f_small, tr(w, "Escolha um widget da barra para movê-lo ou removê-lo, ou um disponível para adicioná-lo.",
 		                                                                   "Pick a widget on the bar to move or remove it, or an available one to add it."), c.w), th.muted)
 	} else if lay.sel_zone == 3 {
-		info := BAR_WIDGET_INFO[avail[lay.sel]]
-		label := fmt.tprintf(tr(w, "Adicionar %s a:", "Add %s to:"), tr(w, info.pt, info.en))
+		label := fmt.tprintf(tr(w, "Adicionar %s a:", "Add %s to:"), ellipsize(w, w.f_body, lay_entry_label(w, avail[lay.sel]), 200))
 		text(w, w.f_body, x, ty, toolbar_h, label, th.fg)
 		x += text_width(w, w.f_body, label) + 14
 		zone_names := [3]string{tr(w, "Início", "Start"), tr(w, "Centro", "Center"), tr(w, "Fim", "End")}
@@ -451,9 +477,8 @@ draw_widget_editor :: proc(w: ^Wizard, cv: ^tx.Canvas, c: tx.Rect) {
 		}
 	} else {
 		zone := lay.zones[lay.sel_zone]
-		info := BAR_WIDGET_INFO[zone[lay.sel]]
-		icon(w, w.f_icon_small, {x, ty, 22, toolbar_h}, info.icon, th.accent)
-		name := ellipsize(w, w.f_h2, tr(w, info.pt, info.en), 180)
+		draw_entry_icon(w, {x, ty, 22, toolbar_h}, zone[lay.sel], th.accent)
+		name := ellipsize(w, w.f_h2, lay_entry_label(w, zone[lay.sel]), 180)
 		text(w, w.f_h2, x + 28, ty, toolbar_h, name, th.fg)
 		x += 28 + text_width(w, w.f_h2, name) + 16
 		b: i32 = toolbar_h

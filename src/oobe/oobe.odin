@@ -61,11 +61,12 @@ Action :: enum {
 	Sc_Default_Edit, Sc_Key_Remove, Sc_Key_Restore, Sc_Restore_All, // milk's own shortcuts (shortcuts.odin)
 	Th_New, Th_Edit, Th_Slot, Th_Variant, Th_Slider, Th_Swatch, Th_Save, Th_Cancel, Th_Delete, Th_Scheme,
 	Bar_Tab, Bar_Preset, Lw_Select, Lw_Move, Lw_Remove, Lw_Add,
+	Scr_New, Scr_Edit, Scr_Example, Scr_Save, Scr_Cancel, Scr_Delete, Scr_Test, Scr_Mode, Scr_Icon, Scr_Icon_Back, Scr_Icon_Pick, // barscripts.odin
 	Language,
 	Display_Ui, // Settings → Tela: the temperature slider, the time zone button (display.odin)
 }
 
-@(private) Scroll_Id :: enum { None, Layouts, Variants, Wallpapers, Shortcuts, Apps, Actions, Themes, Zone_Start, Zone_Center, Zone_End, Zone_Avail, Avatars }
+@(private) Scroll_Id :: enum { None, Layouts, Variants, Wallpapers, Shortcuts, Apps, Actions, Themes, Zone_Start, Zone_Center, Zone_End, Zone_Avail, Avatars, Scripts }
 
 @(private) Field :: enum { None, Search, Test, Text }
 
@@ -448,6 +449,15 @@ handle_event :: proc(w: ^Wizard, ev: ^xlib.XEvent) {
 		if w.mode == .Settings && w.set.sc.ed.capturing { capture_release(w, &ev.xkey) }
 	case .ConfigureNotify:
 		if ev.xconfigure.window == w.win && w.mode == .Settings { settings_resized(w, ev.xconfigure.width, ev.xconfigure.height) }
+	case .SelectionNotify:
+		// Ctrl+V in a text field: the clipboard's text arrives (request_paste).
+		sel := &ev.xselection
+		if sel.requestor != w.win || sel.property == 0 { return }
+		pasted := tx.get_utf8_string(w.c, w.win, "MILK_PASTE")
+		xlib.DeleteProperty(w.c.dpy, w.win, sel.property)
+		if w.focus == .None { return }
+		one_line, _ := strings.replace_all(pasted, "\n", " ", context.temp_allocator)
+		if text := strings.trim_space(printable(one_line)); text != "" { field_insert(w, text) }
 	case .ClientMessage:
 		if ev.xclient.window == w.win && w.mode == .Settings {
 			if xlib.Atom(ev.xclient.data.l[0]) == tx.atom(w.c, "WM_DELETE_WINDOW") { w.state = .Finished }
@@ -522,6 +532,7 @@ scroll_ptr :: proc(w: ^Wizard, id: Scroll_Id) -> ^i32 {
 	case .Zone_End:   return &w.set.lay.scroll[2]
 	case .Zone_Avail: return &w.set.lay.scroll[3]
 	case .Avatars:    return &w.set.avatar.scroll
+	case .Scripts:    return &w.set.scr.scroll
 	}
 	return nil
 }
@@ -631,6 +642,8 @@ do_action :: proc(w: ^Wizard, action: Action, arg: int) {
 		settings_changed(w, .Theme)
 	case .Bar_Tab, .Bar_Preset, .Lw_Select, .Lw_Move, .Lw_Remove, .Lw_Add:
 		layout_action(w, action, arg)
+	case .Scr_New, .Scr_Edit, .Scr_Example, .Scr_Save, .Scr_Cancel, .Scr_Delete, .Scr_Test, .Scr_Mode, .Scr_Icon, .Scr_Icon_Back, .Scr_Icon_Pick:
+		scripts_action(w, action, arg)
 	case .Display_Ui:
 		display_action(w, arg)
 	}
@@ -646,6 +659,8 @@ do_action :: proc(w: ^Wizard, action: Action, arg: int) {
 @(private) KS_UP        :: 0xff52
 @(private) KS_RIGHT     :: 0xff53
 @(private) KS_DOWN      :: 0xff54
+@(private) KS_V         :: 0x76
+@(private) KS_V_UPPER   :: 0x56
 
 // The input context follows the text fields (not the shortcut capture,
 // which needs raw keys).
@@ -669,6 +684,10 @@ on_key :: proc(w: ^Wizard, ev: ^xlib.XKeyEvent) {
 	typed := printable(raw)
 
 	if w.focus != .None {
+		if .ControlMask in ev.state && (ks == KS_V || ks == KS_V_UPPER) {
+			request_paste(w, ev.time)
+			return
+		}
 		switch ks {
 		case KS_ESCAPE:
 			w.focus = .None
@@ -720,6 +739,14 @@ on_key :: proc(w: ^Wizard, ev: ^xlib.XKeyEvent) {
 			}
 		}
 	}
+}
+
+// Ask the clipboard's owner for its text; it arrives as a SelectionNotify.
+@(private)
+request_paste :: proc(w: ^Wizard, t: xlib.Time) {
+	c := w.c
+	xlib.ConvertSelection(c.dpy, tx.atom(c, "CLIPBOARD"), tx.atom(c, "UTF8_STRING"), tx.atom(c, "MILK_PASTE"), w.win, t)
+	xlib.Flush(c.dpy)
 }
 
 // Composed text without control characters (Enter, Backspace and Tab also

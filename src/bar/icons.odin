@@ -15,6 +15,7 @@ import "core:os"
 import "core:strconv"
 import "core:strings"
 import "core:unicode/utf8"
+import config "../config"
 import tx "../tx"
 
 Icon :: enum {
@@ -258,6 +259,12 @@ resolve_icons :: proc(b: ^Bar) {
 
 @(private)
 set_glyph :: proc(b: ^Bar, icon: Icon, font: ^tx.Font, text: string) {
+	b.icons.glyphs[icon] = make_glyph(b, font, text)
+}
+
+// `text` in `font`, measured for placing by its ink (the text is cloned).
+@(private)
+make_glyph :: proc(b: ^Bar, font: ^tx.Font, text: string) -> Glyph {
 	ext := tx.text_extents(b.c, font, text)
 	advance, ink_w := i32(ext.xOff), i32(ext.width)
 	dx: i32
@@ -267,7 +274,7 @@ set_glyph :: proc(b: ^Bar, icon: Icon, font: ^tx.Font, text: string) {
 		dx = i32(ext.x)
 		advance = ink_w
 	}
-	b.icons.glyphs[icon] = Glyph{
+	return Glyph{
 		font    = font,
 		text    = strings.clone(text),
 		ok      = true,
@@ -344,6 +351,30 @@ load_tabler_map :: proc(font_file: string, out: ^[Icon]rune) {
 		if !is_str || !strings.has_prefix(cp, "U+") { continue }
 		if v, ok := strconv.parse_uint(cp[2:], 16); ok && v > 0 && v < 0x110000 { out[icon] = rune(v) }
 	}
+}
+
+// Every name of the Tabler map (tabler.json next to the icon font), for the
+// icons the user names (script widgets); read once per font file.
+@(private)
+tabler_codepoint :: proc(b: ^Bar, name: string) -> (rune, bool) {
+	file := b.cfg.bar.icon_font_file
+	if file == "" { return 0, false }
+	if file != b.tabler_names_file {
+		free_tabler_names(b)
+		b.tabler_names_file = strings.clone(file)
+		config.load_tabler_names(file, &b.tabler_names)
+	}
+	r, ok := b.tabler_names[name]
+	return r, ok
+}
+
+@(private)
+free_tabler_names :: proc(b: ^Bar) {
+	for name in b.tabler_names { delete(name) }
+	delete(b.tabler_names)
+	b.tabler_names = nil
+	delete(b.tabler_names_file)
+	b.tabler_names_file = ""
 }
 
 // The launcher: milk's logo when bar.launcherIcon is empty (null) or "milk";

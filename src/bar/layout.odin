@@ -39,6 +39,7 @@ Widget_Kind :: enum {
 	Clock,
 	Settings,
 	Session,
+	Script, // a script widget, "script:<name>" (scripts.odin)
 }
 
 // Widget ids as used in milk.json (bar.start/center/end and bar.commands).
@@ -63,6 +64,7 @@ WIDGET_IDS := [Widget_Kind]string{
 	.Clock         = "clock",
 	.Settings      = "settings",
 	.Session       = "session",
+	.Script        = "script", // never an id on its own: "script:<name>"
 }
 
 Section :: enum { Start, Center, End }
@@ -74,9 +76,11 @@ Widget :: struct {
 	pad:        i32, // padding inside the box before (and after) the content
 	logo:       bool, // the launcher shows milk's logo
 	visible:    bool,
+	script:     int,  // .Script: index into bar.scripts (and b.scripts)
 	// Content resolved by the last layout pass (text lives in the temp allocator).
 	icon:       Icon,
 	has_icon:   bool,
+	glyph:      ^Glyph, // the icon when it is not one of the Icon set (script widgets)
 	image:      ^tx.Image,
 	text:       string,
 	text_w:     i32,
@@ -93,9 +97,16 @@ MIN_FLEX     :: 60 // narrowest width a title or media text is squeezed to
 @(private)
 widget_kind :: proc(id: string) -> (Widget_Kind, bool) {
 	for kind in Widget_Kind {
-		if WIDGET_IDS[kind] == id { return kind, true }
+		if kind != .Script && WIDGET_IDS[kind] == id { return kind, true }
 	}
 	return .Spacer, false
+}
+
+// The glyph a widget shows: its own (script widgets) or one of the Icon set.
+@(private)
+widget_glyph :: proc(b: ^Bar, w: ^Widget) -> ^Glyph {
+	if w.glyph != nil { return w.glyph }
+	return &b.icons.glyphs[w.icon]
 }
 
 @(private)
@@ -103,6 +114,10 @@ build_widgets :: proc(b: ^Bar) {
 	clear(&b.widgets)
 	add :: proc(b: ^Bar, ids: []string, section: Section) {
 		for id in ids {
+			if name, is_script := config.script_widget_name(id); is_script {
+				if i := script_index(b, name); i >= 0 { append(&b.widgets, Widget{kind = .Script, section = section, script = i}) }
+				continue
+			}
 			kind, ok := widget_kind(id)
 			if !ok {
 				if id not_in b.unsupported {
@@ -277,6 +292,7 @@ percent_text :: proc(v: int) -> string {
 measure :: proc(b: ^Bar, w: ^Widget, title_limit, media_limit, tasks_limit: i32) {
 	th := &b.theme
 	w.has_icon = false
+	w.glyph = nil
 	w.image = nil
 	w.logo = false
 	w.text = ""
@@ -351,6 +367,7 @@ measure :: proc(b: ^Bar, w: ^Widget, title_limit, media_limit, tasks_limit: i32)
 		}
 	case .Date:  set_text(b, w, b.date_text, 0)
 	case .Clock: set_text(b, w, b.clock_text, 0)
+	case .Script: script_measure(b, w)
 	}
 	// The box: [pad][icon ink or image][5 px][text][pad]; icon-only items are
 	// exactly one slot wide with the ink centred.
@@ -362,7 +379,7 @@ measure :: proc(b: ^Bar, w: ^Widget, title_limit, media_limit, tasks_limit: i32)
 	case w.image != nil:
 		_, lead = image_ink(w.image^)
 	case w.has_icon:
-		lead = glyph_ink_w(&b.icons.glyphs[w.icon])
+		lead = glyph_ink_w(widget_glyph(b, w))
 	}
 	switch {
 	case lead > 0 && w.text_w == 0:
@@ -636,6 +653,7 @@ is_interactive :: proc(b: ^Bar, w: ^Widget) -> bool {
 	case .Notifications, .Clipboard, .Session: return b.click_handler != nil || command_for(b, WIDGET_IDS[w.kind]) != "" // .Session: milk's session menu (milk/session.odin)
 	case .Settings:            return true
 	case .Media:               return b.media.status != .Idle || command_for(b, "media") != ""
+	case .Script:              return script_interactive(b, w)
 	}
 	return command_for(b, WIDGET_IDS[w.kind]) != ""
 }
@@ -703,7 +721,7 @@ draw_widget_text :: proc(b: ^Bar, ts: ^tx.Text_Surface, w: ^Widget) {
 		x += ink_w + TEXT_INK_GAP
 	} else if w.has_icon {
 		// Icons are placed by their ink: horizontally in the slot, vertically in the bar.
-		g := &b.icons.glyphs[w.icon]
+		g := widget_glyph(b, w)
 		baseline := b.body.y + (b.body.h - g.ink_h) / 2 + g.ink_y
 		tx.draw_text(ts, g.font, x - g.ink_x, baseline, g.text, w.icon_color)
 		x += glyph_ink_w(g) + TEXT_INK_GAP
@@ -720,7 +738,7 @@ draw_widget_text :: proc(b: ^Bar, ts: ^tx.Text_Surface, w: ^Widget) {
 @(private)
 draw_badge :: proc(b: ^Bar, pm: xlib.Pixmap, w: ^Widget) {
 	if !w.has_icon { return }
-	g := &b.icons.glyphs[w.icon]
+	g := widget_glyph(b, w)
 	ink_right := b.body.x + w.x + w.pad + glyph_ink_w(g)
 	ink_top := b.body.y + (b.body.h - g.ink_h) / 2
 	R    :: f32(3.5)
@@ -800,6 +818,10 @@ on_button :: proc(b: ^Bar, ev: ^xlib.XButtonEvent) {
 	}
 	if w.kind == .Tray {
 		tray_button(b, w, ev) // every button acts on the icon under the pointer
+		return
+	}
+	if w.kind == .Script {
+		script_button(b, w, i32(ev.button))
 		return
 	}
 	switch i32(ev.button) {

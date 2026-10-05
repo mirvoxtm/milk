@@ -164,22 +164,29 @@ draw_area_icon_picker :: proc(w: ^Wizard, cv: ^tx.Canvas, c: tx.Rect) {
 	if name := strings.trim_space(string(w.set.names[a.picking][:])); name != "" { title = fmt.tprintf("%s · %s", title, name) }
 	text(w, w.f_h2, c.x + bw + 16, c.y, BUTTON_H, ellipsize(w, w.f_h2, title, c.w - bw - 16), th.fg)
 
-	current := a.icons[a.picking]
-	gap: i32 = 10
 	top := c.y + BUTTON_H + 20
-	cols := max(i32(4), (c.w + gap) / (AREA_ICON_TILE + gap))
-	left := c.x + (c.w - (cols * AREA_ICON_TILE + (cols - 1) * gap)) / 2
+	draw_icon_grid(w, cv, {c.x, top, c.w, c.y + c.h - top}, a.icons[a.picking], .Area_Icon_Pick)
+}
+
+// The icon choices in a grid: "none" (arg -1), then config.AREA_ICONS (arg =
+// their index); `current` is highlighted. Shared with the script widgets' editor.
+@(private)
+draw_icon_grid :: proc(w: ^Wizard, cv: ^tx.Canvas, area: tx.Rect, current: string, action: Action) {
+	th := &w.theme
+	gap: i32 = 10
+	cols := max(i32(4), (area.w + gap) / (AREA_ICON_TILE + gap))
+	left := area.x + (area.w - (cols * AREA_ICON_TILE + (cols - 1) * gap)) / 2
 	for k in -1 ..< len(config.AREA_ICONS) {
 		slot := i32(k + 1)
-		t := tx.Rect{left + (slot % cols) * (AREA_ICON_TILE + gap), top + (slot / cols) * (AREA_ICON_TILE + gap), AREA_ICON_TILE, AREA_ICON_TILE}
-		if t.y + t.h > c.y + c.h + 8 { break }
+		t := tx.Rect{left + (slot % cols) * (AREA_ICON_TILE + gap), area.y + (slot / cols) * (AREA_ICON_TILE + gap), AREA_ICON_TILE, AREA_ICON_TILE}
+		if t.y + t.h > area.y + area.h + 8 { break }
 		glyph := ""
 		if k >= 0 {
 			glyph = area_icon_text(w, w.f_icon, config.AREA_ICONS[k].name)
 			if glyph == "" { continue } // not in this font
 		}
 		sel := k >= 0 ? config.AREA_ICONS[k].name == current : current == ""
-		hot := hovered(w, .Area_Icon_Pick, k)
+		hot := hovered(w, action, k)
 		fill := th.field
 		if sel { fill = th.accent } else if hot { fill = th.hover }
 		fill_rounded(cv, t, 14, fill)
@@ -189,6 +196,6 @@ draw_area_icon_picker :: proc(w: ^Wizard, cv: ^tx.Canvas, c: tx.Rect) {
 		} else {
 			text_centered(w, w.f_icon, t, glyph, fg)
 		}
-		add_hit(w, t, .Area_Icon_Pick, k)
+		add_hit(w, t, action, k)
 	}
 }

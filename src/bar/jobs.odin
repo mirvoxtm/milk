@@ -39,6 +39,9 @@ Job_Kind :: enum {
 	Bt_Action,         // power, connect, disconnect, pair/trust steps; tag = MAC
 	Audio_Query,       // outputs and inputs (the volume card)
 	Audio_Set,         // the default output or input
+	Script_Run,        // a script widget's command (scripts.odin); tag = the script
+	Script_Tail,       // a script widget's command that keeps running, read line by line
+	Script_Action,     // a script widget's click or scroll command; left running when the bar goes
 }
 
 Job :: struct {
@@ -53,6 +56,8 @@ Job :: struct {
 	status:  i32, // raw wait status, -1 when unknown
 	tag:     string, // owned: what the job is about (an SSID, a MAC)
 	step:    int,    // position in a multi-step action
+	group:   bool,   // the child leads its own process group (setsid): signals reach what it started too
+	killed:  bool,   // stopped for running past its timeout
 }
 
 JOB_TIMEOUT :: 5.0
@@ -123,6 +128,16 @@ run_detached :: proc(b: ^Bar, command: string) {
 	append(&b.children, pid)
 }
 
+// `sh -c command` as the leader of a new session and process group when
+// setsid exists, so that killing the group stops whatever the command started.
+@(private)
+group_argv :: proc(b: ^Bar, command: string, allocator := context.temp_allocator) -> []string {
+	argv := make([dynamic]string, 0, 4, allocator)
+	if b.tools.setsid { append(&argv, "setsid") }
+	append(&argv, "sh", "-c", command)
+	return argv[:]
+}
+
 // Start a helper process; with `capture` its stdout (and with `merge_stderr`
 // its stderr too, for error messages) is collected through a pipe.
 @(private)
@@ -186,8 +201,15 @@ read_job :: proc(b: ^Bar, job: ^Job) -> bool {
 	buf: [16384]u8
 	n := posix.read(posix.FD(job.fd), raw_data(buf[:]), len(buf))
 	if n > 0 {
-		append(&job.output, ..buf[:n])
+		#partial switch job.kind {
+		case .Script_Run:
+			// Only the first line counts: a command that prints a lot is not kept whole.
+			if len(job.output) < SCRIPT_OUTPUT_MAX { append(&job.output, ..buf[:min(int(n), SCRIPT_OUTPUT_MAX - len(job.output))]) }
+		case:
+			append(&job.output, ..buf[:n])
+		}
 		if job.kind == .Media_Stream { media_stream_input(b, job) }
+		if job.kind == .Script_Tail { script_tail_input(b, job) }
 		return true
 	}
 	if n < 0 {
@@ -213,8 +235,9 @@ service_jobs :: proc(b: ^Bar, now: f64) {
 				job.exited = true // already reaped elsewhere
 			} else if job.timeout > 0 && now - job.started > job.timeout {
 				log.debugf("Bar helper %v (pid %d) timed out; killing it", job.kind, job.pid)
-				posix.kill(job.pid, .SIGKILL)
+				signal_job(job, .SIGKILL)
 				job.timeout = 0
+				job.killed = true
 			}
 		}
 		if !job.exited { continue }
@@ -258,7 +281,16 @@ finish_job :: proc(b: ^Bar, job: ^Job, now: f64) {
 		bt_job_done(b, job)
 	case .Audio_Query, .Audio_Set:
 		audio_job_done(b, job)
+	case .Script_Run, .Script_Tail, .Script_Action:
+		script_job_done(b, job, now)
 	}
+}
+
+// Send `sig` to the job's process, and to its whole group when it leads one.
+@(private)
+signal_job :: proc(job: ^Job, sig: posix.Signal) {
+	if job.group { posix.kill(-job.pid, sig) }
+	posix.kill(job.pid, sig)
 }
 
 @(private)
@@ -269,12 +301,13 @@ free_job :: proc(job: ^Job) {
 	free(job)
 }
 
-// Stop every helper (used by destroy): kill, then reap synchronously.
+// Stop every helper (used by destroy): kill, then reap synchronously. The
+// commands a script widget's click started belong to the user and keep running.
 @(private)
 kill_jobs :: proc(b: ^Bar) {
 	for job in b.jobs {
-		if !job.exited {
-			posix.kill(job.pid, .SIGKILL)
+		if !job.exited && job.kind != .Script_Action {
+			signal_job(job, .SIGKILL)
 			status: i32
 			posix.waitpid(job.pid, &status, {})
 		}
@@ -288,7 +321,7 @@ kill_job :: proc(b: ^Bar, target: ^Job) {
 	for job, i in b.jobs {
 		if job != target { continue }
 		if !job.exited {
-			posix.kill(job.pid, .SIGKILL)
+			signal_job(job, .SIGKILL)
 			status: i32
 			posix.waitpid(job.pid, &status, {})
 		}

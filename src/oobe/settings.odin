@@ -41,6 +41,7 @@ Control :: enum {
 	Area_Name, // + area index
 	Th_Name, Th_Hex, // theme editor: name, hex field (+ Theme_Slot)
 	Sc_Command, Sc_Site, Sc_Search,
+	Scr_Name, Scr_Exec, Scr_Click, Scr_Icon_Name, Scr_Interval, // barscripts.odin
 	// windows.odin
 	Wm_Mode, Wm_Title_Style, Wm_Title_Side, Wm_Title_Align, Wm_Title_Height, Wm_Placement, Wm_Snap_Layouts,
 	Wm_Snap_Distance, Wm_Raise_Focus,
@@ -119,7 +120,8 @@ Settings :: struct {
 	sc:             Shortcuts,
 	ted:            Theme_Editor,
 	lay:            Layout_Editor,
-	bar_tab:        int,  // Barra: 0 style, 1 layouts, 2 widgets
+	scr:            Scripts_State, // Barra → Scripts (barscripts.odin)
+	bar_tab:        int,  // Barra: 0 style, 1 layouts, 2 widgets, 3 scripts
 	themes_dirty:   bool, // write appearance.customThemes on the next save
 	text_target:    int, // Text_Field argument of the focused field
 
@@ -224,6 +226,7 @@ settings_destroy :: proc(w: ^Wizard) {
 	display_destroy(w)
 	ted_destroy(w)
 	lay_destroy(w)
+	scripts_destroy(w)
 	s^ = {}
 }
 
@@ -396,6 +399,7 @@ draw_settings :: proc(w: ^Wizard, cv: ^tx.Canvas) {
 		switch s.bar_tab {
 		case 1: draw_layout_presets(w, cv, body)
 		case 2: draw_widget_editor(w, cv, body)
+		case 3: draw_scripts_tab(w, cv, body)
 		case:
 			top_h := min(i32(176), body.h / 2 - 20)
 			draw_bar_page(w, cv, {body.x, body.y, body.w, top_h})
@@ -799,6 +803,10 @@ step_control :: proc(w: ^Wizard, ctrl: Control, dir: int) {
 	case .Bar_Opacity:
 		s.bar_opacity = clamp(math.round((s.bar_opacity + 0.05 * f64(dir)) * 100) / 100, 0.3, 1)
 		set_edit(w, "bar.opacity", json.Float(s.bar_opacity))
+	case .Scr_Interval:
+		scr_step_interval(w, dir) // saved with the script
+		w.dirty = true
+		return
 	case .Bar_Margin:
 		s.bar_margin = clamp(s.bar_margin + 2 * dir, 0, 60)
 		set_edit(w, "bar.margin", json.Integer(s.bar_margin))
@@ -883,6 +891,10 @@ settings_text_buffer :: proc(w: ^Wizard) -> ^[dynamic]u8 {
 		if i >= 0 && i < len(Theme_Slot) { return &s.ted.hex[Theme_Slot(i)] }
 	case .Nl_From, .Nl_To, .Nl_Lat, .Nl_Lon:
 		return display_text_buffer(w, ctrl)
+	case .Scr_Name:      return &s.scr.ed.name
+	case .Scr_Exec:      return &s.scr.ed.exec
+	case .Scr_Click:     return &s.scr.ed.click
+	case .Scr_Icon_Name: return &s.scr.ed.icon
 	}
 	return nil
 }
@@ -894,6 +906,11 @@ settings_text_insert :: proc(w: ^Wizard, text: string) {
 	limit := ctrl >= .Sc_Command ? 240 : 48
 	if ctrl == .Th_Name { limit = config.CUSTOM_THEME_NAME_MAX }
 	if ctrl == .Th_Hex { limit = 7 }
+	#partial switch ctrl {
+	case .Scr_Name:             limit = config.SCRIPT_NAME_MAX
+	case .Scr_Exec, .Scr_Click: limit = 4000
+	case .Scr_Icon_Name:        limit = 64
+	}
 	if buf == nil || len(buf) + len(text) > limit { return }
 	append(buf, ..transmute([]u8)text)
 	settings_text_edited(w)
@@ -929,6 +946,9 @@ settings_text_edited :: proc(w: ^Wizard) {
 		return
 	case .Nl_From, .Nl_To, .Nl_Lat, .Nl_Lon:
 		if !display_text_edited(w, ctrl) { return } // saved once valid
+	case .Scr_Name, .Scr_Exec, .Scr_Click, .Scr_Icon_Name:
+		s.scr.ed.error = ""
+		return // saved with the script
 	case:
 		return // editor fields are saved with the shortcut
 	}
@@ -1025,6 +1045,7 @@ settings_tick :: proc(w: ^Wizard, now: f64) {
 	}
 	effects_tick(w, now)
 	palette_view_tick(w, now)
+	scr_tick(w, now)
 }
 
 @(private)
@@ -1039,6 +1060,7 @@ settings_timeout :: proc(w: ^Wizard, now: f64) -> f64 {
 	}
 	if ft := effects_timeout(w, now); ft >= 0 && (t < 0 || ft < t) { t = ft }
 	if pt := palette_view_timeout(w, now); pt >= 0 && (t < 0 || pt < t) { t = pt }
+	if st := scr_timeout(w); st >= 0 && (t < 0 || st < t) { t = st }
 	return t
 }
 
@@ -1062,7 +1084,7 @@ settings_save :: proc(w: ^Wizard) {
 			}
 		}
 	}
-	if len(s.edits) == 0 && !s.sc.dirty && !s.themes_dirty && !s.lay.dirty { return }
+	if len(s.edits) == 0 && !s.sc.dirty && !s.themes_dirty && !s.lay.dirty && !s.scr.dirty { return }
 	theme_changed := "appearance.theme" in s.edits || "appearance.variant" in s.edits
 	themes_changed := s.themes_dirty
 	if !write_edits(w) {
@@ -1073,6 +1095,7 @@ settings_save :: proc(w: ^Wizard) {
 	s.sc.dirty = false
 	s.themes_dirty = false
 	s.lay.dirty = false
+	s.scr.dirty = false
 	s.saved_any = true
 	if theme_changed { update_alacritty(w) }
 	if themes_changed { remove_stale_alacritty(w) }
@@ -1118,6 +1141,10 @@ write_edits :: proc(w: ^Wizard) -> bool {
 	if w.set.themes_dirty {
 		// Rewritten whole too: renamed and deleted themes must disappear.
 		json_set(&root, {"appearance", "customThemes"}, themes_json(w))
+	}
+	if w.set.scr.dirty {
+		// Rewritten whole: renamed and deleted scripts must disappear (bar.start/center/end follow below).
+		json_set(&root, {"bar", "scripts"}, scripts_json(w))
 	}
 	if w.set.lay.dirty {
 		json_set(&root, {"bar", "start"}, lay_json(w, 0))

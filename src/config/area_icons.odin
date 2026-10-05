@@ -1,7 +1,11 @@
 package config
 
+import "core:encoding/json"
+import "core:mem/virtual"
+import "core:os"
 import "core:strconv"
 import "core:strings"
+import "core:unicode/utf8"
 
 // Icons an area may have (workspaces.N.icon): Tabler glyphs of the bar's icon
 // font (bar.iconFontFile), by their Tabler names. The area toast shows the
@@ -46,4 +50,49 @@ workspace_icon :: proc(cfg: ^Config, index: int) -> (rune, bool) {
 	ws, known := workspace(cfg, index)
 	if !known { return 0, false }
 	return area_icon_rune(ws.icon)
+}
+
+// An icon as the user wrote it (script widgets): one character (a Nerd Font
+// glyph, an emoji), "U+XXXX", or a name of AREA_ICONS. `any_font`: not a
+// Tabler name, so any font that has the character may draw it. Other Tabler
+// names are looked up in the whole map (load_tabler_names) by the caller.
+icon_rune :: proc(name: string) -> (r: rune, any_font: bool, ok: bool) {
+	n := strings.trim_space(name)
+	if n == "" { return }
+	if utf8.rune_count_in_string(n) == 1 {
+		c, _ := utf8.decode_rune_in_string(n)
+		return c, true, c > 0x20
+	}
+	if len(n) > 2 && (strings.has_prefix(n, "U+") || strings.has_prefix(n, "u+")) {
+		if v, vok := strconv.parse_uint(n[2:], 16); vok && v > 0x20 && v < 0x110000 { return rune(v), true, true }
+		return
+	}
+	if c, found := area_icon_rune(n); found { return c, false, true }
+	return
+}
+
+// Every icon of the Tabler map next to the icon font file (tabler.json, in
+// Noctalia's format: {"bell": {"codepoint": "U+EA35"}, …}; the installer
+// writes one next to the font it downloads). Keys are cloned into `out`.
+load_tabler_names :: proc(font_file: string, out: ^map[string]rune) {
+	if font_file == "" { return }
+	path := strings.concatenate({os.dir(font_file), "/tabler.json"}, context.temp_allocator)
+	if !os.exists(path) { return }
+	arena: virtual.Arena
+	if virtual.arena_init_growing(&arena) != nil { return }
+	defer virtual.arena_destroy(&arena)
+	scratch := virtual.arena_allocator(&arena)
+	data, err := os.read_entire_file(path, scratch)
+	if err != nil { return }
+	value, perr := json.parse(data, .JSON, false, scratch)
+	if perr != .None { return }
+	root, is_obj := value.(json.Object)
+	if !is_obj { return }
+	for name, v in root {
+		entry, found := v.(json.Object)
+		if !found { continue }
+		cp, is_str := entry["codepoint"].(json.String)
+		if !is_str || !strings.has_prefix(cp, "U+") { continue }
+		if n, ok := strconv.parse_uint(cp[2:], 16); ok && n > 0 && n < 0x110000 { out[strings.clone(name)] = rune(n) }
+	}
 }

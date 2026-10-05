@@ -54,8 +54,34 @@ every area keeps its own wallpaper, colours and icons, and can have a name and a
 - a **pop-up** for the volume and brightness keys.
 - **audio devices**: click the volume in the bar to pick the output (speakers, headphones, hdmi) and the microphone - what's playing follows.
 - a **password dialog** for programs that need administrator rights (gparted, `pkexec`, update tools): milk is the session's polkit agent.
+- **your own bar widgets**: settings → bar → scripts turns any command into a widget, like polybar's scripts - cpu, memory, temperature, free disk and weather are one click away. see [your own widgets](#your-own-widgets).
 - **shortcuts your way**: settings → shortcuts adds your own and changes milk's - give any of them other keys, turn it off or restore it. a shortcut can be a single key too: print screen, pause, menu, the f keys, the media keys or super on its own (it acts when you let go of it).
 - **gtk and qt apps** take milk's colours too, and follow them live (with adw-gtk3 and qt5ct/qt6ct, which the installer adds).
+
+## your own widgets
+
+a script widget is a command whose output shows on the bar - polybar's `custom/script`, milk-style. make them in settings → bar → scripts (with a test button and ready-made examples), or in `milk.json`:
+
+```json
+"bar": {
+  "end": ["script:weather", "tray", "clock"],
+  "scripts": {
+    "weather": {
+      "exec": "curl -sf 'https://wttr.in/?format=%t'",
+      "interval": 900,
+      "icon": "cloud",
+      "onClick": "xdg-open https://wttr.in"
+    }
+  }
+}
+```
+
+- `exec` runs with `sh -c`. the first line it prints is the widget's text, and it runs again `interval` seconds after it finished (default 5). an empty line hides the widget.
+- `"tail": true` keeps the command running instead: every line it prints replaces the text. when it exits, milk starts it again after `interval` seconds.
+- a line can be json too: `{"text": "42%", "icon": "cpu", "state": "warning"}`, where `state` is `normal`, `muted`, `accent` or `warning` (waybar's `class` works as well). polybar's `%{...}` tags are dropped.
+- `icon` is the name of any [tabler icon](https://tabler.io/icons), `U+XXXX` or a single character.
+- `onClick`, `onMiddleClick`, `onRightClick`, `onScrollUp` and `onScrollDown` run commands, where `%pid%` is the tail command's pid (`kill -USR1 %pid%`). after a click, an interval widget runs again right away to show what changed.
+- `maxWidth` caps the text, in pixels (default: `bar.titleMaxWidth`).
 
 ## updating
 

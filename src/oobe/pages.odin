@@ -198,10 +198,14 @@ draw_field :: proc(w: ^Wizard, cv: ^tx.Canvas, r: tx.Rect, lead: Icon, value, pl
 		text(w, w.f_body, x, r.y, r.h, ellipsize(w, w.f_body, placeholder, avail), th.muted)
 	} else {
 		shown := value
-		// Keep the end of long input visible.
-		for len(shown) > 0 && text_width(w, w.f_body, shown) > avail - 6 {
-			_, n := decode_first(shown)
-			shown = shown[n:]
+		if focused {
+			// Keep the end of long input visible (where the caret is).
+			for len(shown) > 0 && text_width(w, w.f_body, shown) > avail - 6 {
+				_, n := decode_first(shown)
+				shown = shown[n:]
+			}
+		} else {
+			shown = ellipsize(w, w.f_body, shown, avail - 6) // its start reads better
 		}
 		text(w, w.f_body, x, r.y, r.h, shown, th.fg)
 		if focused {
