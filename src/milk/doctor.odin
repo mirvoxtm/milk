@@ -102,6 +102,7 @@ PACKAGES := []Package_Names{
 	{"matugen", {"matugen", "", "matugen", "", "matugen"}},
 	{"alacritty", {"alacritty", "alacritty", "alacritty", "alacritty", "alacritty"}},
 	{"rofi", {"rofi", "rofi", "rofi", "rofi", "rofi"}},
+	{"fd", {"fd", "fd-find", "fd-find", "fd", "fd"}},
 	{"maim", {"maim", "maim", "maim", "maim", "maim"}},
 	{"xclip", {"xclip", "xclip", "xclip", "xclip", "xclip"}},
 	{"flameshot", {"flameshot", "flameshot", "flameshot", "flameshot", "flameshot"}},
@@ -279,9 +280,12 @@ cmd_doctor :: proc(opts: ^Options) -> int {
 		for entry in ([][2]string{{cfg.wm.terminal, "the terminal (wm.terminal)"}, {cfg.wm.launcher, "the launcher (wm.launcher)"},
 		                          {cfg.wm.screenshot, "screenshots (wm.screenshot)"}}) {
 			program := command_program(entry[0])
-			if program == "" || program == "sh" { continue }
+			if program == "" || program == "sh" || program == "milk" { continue } // "milk …": this milk
 			check_program(&dr, program, entry[1], false)
 		}
+		// milk's launcher (milk/launcher.odin) is drawn by rofi.
+		check_program(&dr, "rofi", "milk's launcher", true)
+		if _, found := find_in_path("fdfind"); !found { check_program(&dr, "fd", "quick file search in the launcher (else find)", false) }
 		if cfg.compositor.enabled {
 			if path, found := desktop.lactase_path(); found {
 				say(&dr, "ok", fmt.tprintf("lactase — the compositor (%s)", path))

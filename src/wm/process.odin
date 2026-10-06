@@ -1,6 +1,7 @@
 // Commands launched from key bindings (dwm's spawn) and their reaping.
 package wm
 
+import "core:fmt"
 import "core:log"
 import "core:os"
 import "core:strings"
@@ -12,9 +13,10 @@ import "core:sys/posix"
 // closed) and $HOME as the working directory.
 spawn_command :: proc(m: ^Manager, cmd: string) -> bool {
 	if strings.trim_space(cmd) == "" { return false }
+	line := expand_milk(cmd)
 	// Everything the child needs is prepared before fork(): after it, the child
 	// only makes async-signal-safe calls.
-	argv := [4]cstring{"/bin/sh", "-c", strings.clone_to_cstring(cmd, context.temp_allocator), nil}
+	argv := [4]cstring{"/bin/sh", "-c", strings.clone_to_cstring(line, context.temp_allocator), nil}
 	home, _ := os.lookup_env("HOME", context.temp_allocator)
 	chome := strings.clone_to_cstring(home, context.temp_allocator)
 	has_home := home != ""
@@ -56,4 +58,15 @@ reap_children :: proc(m: ^Manager) {
 		// Exited, or not our child any more (ECHILD): forget it.
 		unordered_remove(&m.children, i)
 	}
+}
+
+// milk: "milk …" at the start of a command (the default launcher, "milk
+// launcher") is the milk that runs, not whatever the PATH finds: no rebuild
+// check through the clone's launcher script, and no dependence on ~/.local/bin.
+expand_milk :: proc(cmd: string) -> string {
+	s := strings.trim_left_space(cmd)
+	if s != "milk" && !strings.has_prefix(s, "milk ") { return cmd }
+	exe, err := os.get_executable_path(context.temp_allocator)
+	if err != nil || strings.index_byte(exe, '\'') >= 0 { return cmd }
+	return fmt.tprintf("'%s'%s", exe, s[len("milk"):])
 }

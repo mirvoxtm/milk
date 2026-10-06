@@ -560,7 +560,7 @@ case "$distro" in
         spoil_pkgs=(mpv ffmpegthumbnailer ffmpeg libarchive zip unzip "7zip|p7zip" alacritty)
         lactase_pkgs=(libxcomposite libxdamage libxrender mesa libglvnd)
         snippy_pkgs=(ffmpeg)
-        optional=(alacritty rofi brightnessctl playerctl maim xclip flameshot "?unrar" network-manager-applet
+        optional=(alacritty rofi "?fd" brightnessctl playerctl maim xclip flameshot "?unrar" network-manager-applet
                   adw-gtk-theme qt5ct qt6ct)           # GTK and Qt apps in milk's colours
         odin_pkg=odin; matugen_pkg=matugen ;;
     debian)
@@ -578,7 +578,7 @@ case "$distro" in
         spoil_pkgs=(mpv ffmpegthumbnailer ffmpeg libarchive-tools zip unzip "7zip|p7zip-full" alacritty)
         lactase_pkgs=(libxcomposite-dev libxdamage-dev libxrender-dev libgl-dev libgl1-mesa-dri)
         snippy_pkgs=(ffmpeg)
-        optional=(alacritty rofi brightnessctl playerctl maim xclip flameshot "?unrar|unrar-free" network-manager-gnome
+        optional=(alacritty rofi "?fd-find" brightnessctl playerctl maim xclip flameshot "?unrar|unrar-free" network-manager-gnome
                   "?qt5ct" "?qt6ct") ;;
     fedora)
         required=(
@@ -596,7 +596,7 @@ case "$distro" in
         spoil_pkgs=(mpv ffmpegthumbnailer "ffmpeg-free|ffmpeg" bsdtar zip unzip "7zip|p7zip" alacritty)
         lactase_pkgs=(libXcomposite-devel libXdamage-devel libXrender-devel mesa-libGL-devel mesa-dri-drivers)
         snippy_pkgs=("ffmpeg-free|ffmpeg")
-        optional=(alacritty rofi brightnessctl playerctl maim xclip flameshot "?unrar" network-manager-applet
+        optional=(alacritty rofi "?fd-find" brightnessctl playerctl maim xclip flameshot "?unrar" network-manager-applet
                   "?adw-gtk3-theme" qt5ct qt6ct)
         matugen_pkg=matugen ;;
     opensuse)
@@ -615,7 +615,7 @@ case "$distro" in
         spoil_pkgs=(mpv ffmpegthumbnailer "ffmpeg-7|ffmpeg" bsdtar zip unzip "7zip|p7zip" alacritty)
         lactase_pkgs=(libXcomposite-devel libXdamage-devel libXrender-devel Mesa-libGL-devel Mesa-dri)
         snippy_pkgs=("ffmpeg-7|ffmpeg")
-        optional=(alacritty rofi brightnessctl playerctl maim xclip flameshot "?unrar" NetworkManager-applet qt5ct qt6ct) ;;
+        optional=(alacritty rofi "?fd" brightnessctl playerctl maim xclip flameshot "?unrar" NetworkManager-applet qt5ct qt6ct) ;;
     void)
         required=(
             base-devel git clang curl pam-devel
@@ -631,7 +631,7 @@ case "$distro" in
         spoil_pkgs=(mpv ffmpegthumbnailer ffmpeg bsdtar zip unzip "7zip|p7zip" alacritty)
         lactase_pkgs=(libXcomposite-devel libXdamage-devel libXrender-devel MesaLib-devel libglvnd-devel mesa-dri)
         snippy_pkgs=(ffmpeg)
-        optional=(alacritty rofi brightnessctl playerctl maim xclip flameshot "?unrar" network-manager-applet qt5ct qt6ct)
+        optional=(alacritty rofi "?fd" brightnessctl playerctl maim xclip flameshot "?unrar" network-manager-applet qt5ct qt6ct)
         matugen_pkg=matugen
         services=(dbus elogind NetworkManager bluetooth) ;;
     *)

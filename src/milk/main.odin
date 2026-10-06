@@ -54,6 +54,8 @@ Options :: struct {
 	no_wm:        bool,
 	no_setup:     bool,
 	verbose:      bool,
+	at:           string,   // launcher: the bar button it opens next to ("x,y,w,h")
+	rest:         []string, // action: the words after the action's name
 }
 
 usage :: proc() {
@@ -75,6 +77,9 @@ commands:
                ("update check" only says whether there is something new)
   doctor       check the installation: programs, fonts, session, configuration
   lock         lock the screen (asks the running milk; locks by itself when none runs)
+  launcher     milk's launcher (rofi): apps, windows, files or run (launcher in milk.json)
+  overview     show every area at once (Super+Shift+Tab)
+  action NAME  run one of the window manager's actions (view 3, overview, lock, reload…)
   version      print the version
 
 options:
@@ -88,6 +93,11 @@ options:
 }
 
 main :: proc() {
+	// rofi runs the launcher's apps tab with the chosen text as it is (it may
+	// begin with "-"): no option parsing.
+	if len(os.args) >= 3 && os.args[1] == "launcher" && os.args[2] == "script" {
+		os.exit(cmd_launcher_script(os.args[3:]))
+	}
 	opts, ok := parse_args(os.args[1:])
 	if !ok {
 		usage()
@@ -116,6 +126,18 @@ main :: proc() {
 	case "setup":            code = cmd_setup(&opts)
 	case "settings":         code = cmd_settings(&opts)
 	case "lock":             code = cmd_lock(&opts) // session.odin
+	case "launcher":         code = cmd_launcher(&opts) // launcher.odin
+	case "overview":         code = cmd_action("overview")
+	case "action":
+		if opts.value == "" {
+			fmt.eprintln("usage: milk action NAME [ARGUMENT]   (e.g. milk action view 3)")
+			code = 2
+		} else {
+			words := make([dynamic]string, context.temp_allocator)
+			append(&words, opts.value)
+			append(&words, ..opts.rest)
+			code = cmd_action(strings.join(words[:], " "))
+		}
 	case "version":          fmt.println("milk", VERSION)
 	case "help":             usage()
 	case:
@@ -139,13 +161,17 @@ parse_args :: proc(args: []string) -> (opts: Options, ok: bool) {
 		case "--no-setup":         opts.no_setup = true
 		case "--verbose", "-v":    opts.verbose = true
 		case "--help", "-h":       opts.command = "help"
-		case "--runtime-root", "--config":
+		case "--runtime-root", "--config", "--at":
 			if i + 1 >= len(args) {
 				fmt.eprintfln("%s needs a value", a)
 				return opts, false
 			}
 			i += 1
-			if a == "--config" { opts.config_path = args[i] } else { opts.runtime_root = args[i] }
+			switch a {
+			case "--config": opts.config_path = args[i]
+			case "--at":     opts.at = args[i]
+			case:            opts.runtime_root = args[i]
+			}
 		case:
 			if strings.has_prefix(a, "-") {
 				fmt.eprintfln("unknown option: %s", a)
@@ -155,8 +181,14 @@ parse_args :: proc(args: []string) -> (opts: Options, ok: bool) {
 			case 0: opts.command = a
 			case 1: opts.value = a
 			case:
-				fmt.eprintfln("unexpected argument: %s", a)
-				return opts, false
+				if opts.command != "action" {
+					fmt.eprintfln("unexpected argument: %s", a)
+					return opts, false
+				}
+				rest := make([dynamic]string)
+				append(&rest, ..opts.rest)
+				append(&rest, a)
+				opts.rest = rest[:]
 			}
 			positional += 1
 		}
@@ -480,8 +512,17 @@ bar_click :: proc(data: rawptr, id: string, anchor: tx.Rect) -> bool {
 		return true
 	case "session":
 		return open_session_menu(r, anchor) // session.odin
+	case "launcher":
+		return open_launcher(r, anchor) // launcher.odin
 	}
 	return false
+}
+
+// The overview's cards show each area's wallpaper as milk keeps it.
+wallpaper_probe :: proc(data: rawptr, area: int) -> (pm: xlib.Pixmap, w, h: i32, ok: bool) {
+	r := (^Runner)(data)
+	if r.daemon == nil { return }
+	return desktop.area_wallpaper(r.daemon, area)
 }
 
 // Desktop icons and windows dragged onto the bar's area dots go to that area.
@@ -587,6 +628,7 @@ run :: proc(opts: ^Options, cfg: ^config.Config) -> int {
 	}
 	r.daemon = daemon
 	defer desktop.destroy(daemon)
+	if r.manager != nil { wm.set_wallpaper_probe(r.manager, wallpaper_probe, &r) }
 	desktop.set_drop_probe(daemon, drop_probe, &r) // icons dropped on the area dots
 
 	if cfg.bar.enabled && !opts.no_bar { create_bar(&r) }
@@ -672,7 +714,13 @@ loop :: proc(r: ^Runner) {
 					notify.toggle_panel(r.notes)
 				}
 			case "lock":
+				wm.overview_finish(r.manager) // it holds the keyboard the lock screen needs
 				lock.lock_now(r.idle, "lock action")
+			case "overview":
+				// The overview opened: nothing of the bar's stays open behind it.
+				if r.bar != nil { bar.close_popups(r.bar) }
+				if r.notes != nil { notify.close_panel(r.notes) }
+				if r.clips != nil { clip.close_panel(r.clips) }
 			}
 			// The root menu's entries for the desktop icons.
 			if req := wm.desktop_requested(r.manager); req != "" { desktop.request(r.daemon, req) }
@@ -820,6 +868,10 @@ system_request :: proc(r: ^Runner, action: string) {
 		if r.night != nil && nightlight.toggle(r.night, r.opts.config_path) { g_reload = true }
 	case "volume-up", "volume-down", "mute", "brightness-up", "brightness-down":
 		if r.bar == nil || !bar.media_key(r.bar, action) { wm.run_keys_helper(r.manager, action) }
+	// The session menu's (the launcher asks for them by name).
+	case "suspend":  lock.power_action(r.idle, "Suspend")
+	case "reboot":   lock.power_action(r.idle, "Reboot")
+	case "poweroff": lock.power_action(r.idle, "PowerOff")
 	}
 }
 

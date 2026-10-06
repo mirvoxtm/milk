@@ -88,6 +88,7 @@ Manager :: struct {
 	menu:            menu.Menu,           // the open menu (menus.odin)
 	menu_entries:    [dynamic]Menu_Entry, // what the entries of the open menu do
 	switcher:        Switcher,            // Alt+Tab (switcher.odin)
+	overview:        Overview,            // every area at once (overview.odin)
 	showing_desktop: bool,
 	desktop_hidden:  [dynamic]xlib.Window, // minimized by "show desktop"
 	desktop_request: string, // a root menu action for the desktop icons (static strings)
@@ -179,6 +180,7 @@ create :: proc(c: ^tx.Connection, cfg: ^config.Config) -> (^Manager, bool) {
 destroy :: proc(m: ^Manager) {
 	if m == nil { return }
 	context.allocator = m.allocator
+	overview_destroy(m)
 	if m.started {
 		anim_finish_all(m)
 		cleanup(m)
@@ -246,6 +248,8 @@ start :: proc(m: ^Manager) {
 	decor_setup(m)
 	build_bindings(m)
 	ewmh_setup(m)
+	// Requests nobody took (milk was not running) must not run now.
+	xlib.DeleteProperty(m.dpy, m.root, tx.atom(m.c, MILK_ACTION))
 
 	// Root cursor and event mask (the union with what the caller selected).
 	wa: xlib.XSetWindowAttributes
@@ -256,6 +260,7 @@ start :: proc(m: ^Manager) {
 	xlib.ChangeWindowAttributes(m.dpy, m.root, {.CWEventMask, .CWCursor}, &wa)
 	grabkeys(m)
 	compositor_watch(m)
+	overview_prepare(m)
 	m.started = true
 	focus(m, nil)
 	scan(m)
@@ -272,6 +277,10 @@ handle_event :: proc(m: ^Manager, ev: ^xlib.XEvent) -> bool {
 	if m == nil || !m.started || ev == nil { return false }
 	context.allocator = m.allocator
 	if compositor_event(m, ev) { return true }
+	if overview_event(m, ev) {
+		ewmh_sync(m)
+		return true
+	}
 	if menu.is_open(&m.menu) && menu.handle_event(&m.menu, ev) {
 		if id, ok := menu.take_result(&m.menu); ok { menu_dispatch(m, id) }
 		ewmh_sync(m)
@@ -312,13 +321,16 @@ tick :: proc(m: ^Manager, now: f64) {
 	context.allocator = m.allocator
 	reap_children(m)
 	anim_step(m, now)
+	overview_tick(m, now)
 }
 
 // The window manager has no timers: children are reaped on the wake-up that
 // SIGCHLD causes in the main loop.
 next_timeout :: proc(m: ^Manager, now: f64) -> f64 {
-	if m != nil && anim_running(m) { return ANIM_FRAME }
-	return -1
+	if m == nil { return -1 }
+	timeout := overview_timeout(m, now)
+	if anim_running(m) && (timeout < 0 || timeout > ANIM_FRAME) { timeout = ANIM_FRAME }
+	return timeout
 }
 
 // Apply a new configuration: colours, borders, gaps, master area, tags, keys,
@@ -334,6 +346,14 @@ reload :: proc(m: ^Manager, cfg: ^config.Config) {
 	old := m.settings
 	m.settings = settings_from_config(cfg)
 	defer settings_destroy(&old)
+	// The overview stays (the wallpaper theme reloads the colours after every
+	// area switch) unless its cards change.
+	if m.settings.tag_count != old.tag_count || m.settings.floating != old.floating {
+		overview_finish(m)
+		overview_fonts_reset(m)
+	} else {
+		overview_restyle(m)
+	}
 	if !m.started { return }
 	s := &m.settings
 	decor_setup(m)

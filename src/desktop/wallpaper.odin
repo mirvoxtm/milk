@@ -395,6 +395,26 @@ drawn_capacity :: proc(d: ^Daemon) -> int {
 	return clamp(DRAWN_BUDGET / bytes, 3, DRAWN_MAX)
 }
 
+// The wallpaper of area `index` as milk keeps it (a screen-sized pixmap owned
+// by milk's connection, valid until the next main-loop iteration), for the
+// overview's cards; ok = false when it has not been drawn yet.
+area_wallpaper :: proc(d: ^Daemon, index: int) -> (pm: xlib.Pixmap, w, h: i32, ok: bool) {
+	if d == nil { return }
+	target, known := wallpaper_target(d, index)
+	if !known { return }
+	if i := drawn_find(&d.wallpaper, target.key); i >= 0 {
+		e := d.wallpaper.drawn[i]
+		return e.pixmap, e.w, e.h, true
+	}
+	if target.key == d.wallpaper.shown {
+		if root, has := tx.root_pixmap(d.c); has {
+			w, h, ok = tx.drawable_size(d.c, xlib.Drawable(root))
+			return root, w, h, ok
+		}
+	}
+	return
+}
+
 // Forget the drawn wallpapers (the screen size changed).
 wallpaper_forget_drawn :: proc(d: ^Daemon) {
 	preload_reset(d)

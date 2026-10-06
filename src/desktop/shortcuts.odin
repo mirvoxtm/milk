@@ -113,7 +113,7 @@ locale_suffixes :: proc() -> []string {
 	return out[:]
 }
 
-@(private)
+// A key in the user's language (Name[pt_BR], Name[pt]), else the plain one.
 localized :: proc(section: Ini_Section, key: string) -> string {
 	for suffix in locale_suffixes() {
 		if v, ok := section[strings.concatenate({key, "[", suffix, "]"}, context.temp_allocator)]; ok && v != "" { return v }

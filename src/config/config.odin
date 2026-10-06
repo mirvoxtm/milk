@@ -403,9 +403,11 @@ WM_ACTIONS :: []string{
 	"view-next", "view-prev", "view-last", "send-next", "send-prev", "terminal", "launcher", "files",
 	"screenshot", "clipboard", "notifications", "reload", "quit",
 	"lock", // the lock screen (package lock)
+	"overview", // every area at once (wm/overview.odin)
 	"desktop-new-folder", "desktop-arrange", "desktop-open-folder",
-	// Handled by the main loop (night light; volume/brightness with the on-screen pop-up).
+	// Handled by the main loop (night light; volume/brightness with the on-screen pop-up; logind).
 	"night-light", "volume-up", "volume-down", "mute", "brightness-up", "brightness-down",
+	"suspend", "reboot", "poweroff",
 	// dwm's keys (the defaults of the tiling mode).
 	"zoom", "master-grow", "master-shrink", "master-more", "master-fewer", "layout-last", "view-all", "send-all",
 	"view", "send", "toggle-view", "toggle-tag", "layout", "focus-monitor", "send-monitor", "exec", "settings",
@@ -534,6 +536,7 @@ Config :: struct {
 	osd:           OSD_Options,         // osd: the volume/brightness pop-up
 	idle:          Idle_Options, // lock screen and idle (parse_idle_lock)
 	lock:          Lock_Options,
+	launcher:      Launcher_Options, // launcher.odin
 	allocator:  runtime_allocator,
 }
 
@@ -591,11 +594,25 @@ default_bar :: proc() -> Bar_Options {
 	return b
 }
 
+// milk's own launcher (milk/launcher.odin), for wm.launcher and
+// bar.commands.launcher. "milk" at the start of a command is the running milk.
+DEFAULT_LAUNCHER :: "milk launcher"
+
+// The launcher milk had before its own: plain rofi with milk's theme. Most
+// milk.json files have it written in, so it now stands for milk's launcher.
+@(private)
+LEGACY_LAUNCHER :: `rofi -show drun -theme "$MILK_ROFI_THEME"`
+
+@(private)
+migrate_launcher :: proc(cmd: string) -> string {
+	return strings.trim_space(cmd) == LEGACY_LAUNCHER ? DEFAULT_LAUNCHER : cmd
+}
+
 // Defaults follow dwm's config.def.h, with Super as the modifier. Strings and
 // slices are literals: the loader clones what it stores.
 default_wm :: proc() -> WM_Options {
 	return {
-		enabled = true, mod_key = "super", terminal = "alacritty", launcher = `rofi -show drun -theme "$MILK_ROFI_THEME"`,
+		enabled = true, mod_key = "super", terminal = "alacritty", launcher = DEFAULT_LAUNCHER,
 		border_width = 2, border_color = "#444444", focus_color = "#4A3F35", gaps = 0,
 		master_factor = 0.55, master_count = 1, resize_hints = true, focus_follows_mouse = true,
 		tag_count = 9, animation = 180, screenshot = "", corner_radius = 10,
@@ -844,7 +861,7 @@ parse_bar :: proc(l: ^Loader, root: json.Object, out: ^Bar_Options) -> bool {
 	for key, value in commands {
 		s, is_str := value.(string)
 		if !is_str { return fail(l, "bar.commands.%s must be a string.", key) }
-		out.commands[strings.clone(key)] = strings.clone(s)
+		out.commands[strings.clone(key)] = strings.clone(key == "launcher" ? migrate_launcher(s) : s)
 	}
 	out.launcher_icon = get_string(l, section, "launcherIcon", "bar", d.launcher_icon, true) or_return
 	out.date_format = get_string(l, section, "dateFormat", "bar", d.date_format) or_return
@@ -971,7 +988,9 @@ parse_wm :: proc(l: ^Loader, root: json.Object, out: ^WM_Options) -> bool {
 	out.enabled = get_bool(l, section, "enabled", "wm", d.enabled) or_return
 	out.mod_key = get_choice(l, section, "modKey", "wm", d.mod_key, WM_MOD_KEYS) or_return
 	out.terminal = get_string(l, section, "terminal", "wm", d.terminal) or_return
-	out.launcher = get_string(l, section, "launcher", "wm", d.launcher) or_return
+	launcher := get_string(l, section, "launcher", "wm", d.launcher) or_return
+	out.launcher = strings.clone(migrate_launcher(launcher))
+	delete(launcher)
 	bw := get_number(l, section, "borderWidth", "wm", f64(d.border_width), 0, 20) or_return
 	out.border_width = int(bw)
 	out.border_color = get_string(l, section, "borderColor", "wm", d.border_color) or_return
@@ -1442,6 +1461,7 @@ parse_root :: proc(l: ^Loader, root: json.Object, cfg: ^Config) -> bool {
 	parse_wm(l, root, &cfg.wm) or_return
 	parse_extras(l, root, cfg) or_return
 	parse_night_light_osd(l, root, cfg) or_return // nightlight.odin
+	parse_launcher(l, root, &cfg.launcher) or_return // launcher.odin
 	return true
 }
 
@@ -1450,6 +1470,7 @@ destroy :: proc(cfg: ^Config) {
 	delete(cfg.paths.common); delete(cfg.paths.wallpapers); delete(cfg.paths.wallpaper_cache)
 	for _, ws in cfg.workspaces { delete(ws.name); delete(ws.folder); delete(ws.wallpaper); delete(ws.icon) }
 	delete(cfg.workspaces)
+	destroy_launcher(&cfg.launcher)
 	delete(cfg.linux.wallpaper_mode)
 	delete(cfg.linux.indicator.font); delete(cfg.linux.indicator.position)
 	delete(cfg.linux.shortcuts.mode); delete(cfg.linux.shortcuts.font); delete(cfg.linux.shortcuts.icon_theme); delete(cfg.linux.shortcuts.monitor)

@@ -1,8 +1,8 @@
 // rofi follows the milk theme: on every start and reload milk writes a rofi
 // theme generated from the current colours (appearance preset or custom
 // bar.theme), font and language to $XDG_CACHE_HOME/milk/rofi.rasi and exports
-// its path as $MILK_ROFI_THEME, which the default launcher command uses:
-//     rofi -show drun -theme "$MILK_ROFI_THEME"
+// its path as $MILK_ROFI_THEME. milk's launcher (launcher.odin) draws with it,
+// and so can anything else: rofi -show drun -theme "$MILK_ROFI_THEME".
 package milk
 
 import "core:fmt"
@@ -51,6 +51,11 @@ configuration {
     display-run: "@RUN@";
     display-window: "@WINDOWS@";
     drun-display-format: "{name}";
+    window-format: "{t}   ·   {w}";
+    sort: true;
+    sorting-method: "fzf";
+    /* Long file paths keep their name in view. */
+    ellipsize-mode: "middle";
 }
 
 * {
@@ -81,7 +86,7 @@ window {
 
 mainbox {
     spacing: 10px;
-    children: [ inputbar, message, listview ];
+    children: [ inputbar, message, listview, mode-switcher ];
 }
 
 inputbar {
@@ -89,7 +94,7 @@ inputbar {
     border-radius: 12px;
     padding: 10px 14px;
     spacing: 10px;
-    children: [ prompt, entry ];
+    children: [ entry ];
 }
 
 prompt {
@@ -106,6 +111,23 @@ message {
     background-color: @milk-surface;
     border-radius: 10px;
     padding: 8px 12px;
+}
+
+mode-switcher {
+    spacing: 6px;
+}
+
+button {
+    padding: 7px 12px;
+    border-radius: 10px;
+    background-color: @milk-surface;
+    text-color: @milk-muted;
+    cursor: pointer;
+}
+
+button selected {
+    background-color: @milk-accent;
+    text-color: @milk-accent-fg;
 }
 
 listview {

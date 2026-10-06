@@ -23,7 +23,7 @@ import tx "../tx"
 @(private) NOTICE_TIME :: 2.2
 
 @(private)
-Section :: enum { Appearance, Wallpapers, Bar, Windows, Desktop, Effects, Display, Shortcuts, Keyboard, Notifications, Clipboard, Lock, Areas, About }
+Section :: enum { Appearance, Wallpapers, Bar, Windows, Desktop, Effects, Display, Shortcuts, Launcher, Keyboard, Notifications, Clipboard, Lock, Areas, About }
 
 // What a change touched (decides which keys are written and how soon).
 @(private)
@@ -53,6 +53,9 @@ Control :: enum {
 	Lock_Enabled, Lock_After, Dim_After, Screen_Off_After, Suspend_After, Lock_On_Suspend, Inhibit_Fullscreen,
 	// areas.odin
 	Area_Number, Area_Bar_Icons,
+	// launcher.odin
+	Ln_Milk_Entries, Ln_Calculator, Ln_Commands, Ln_Engine, Ln_Files, Ln_Folder,
+	Ln_Tab_Windows, Ln_Tab_Files, Ln_Tab_Run, Ln_Near, Ln_Width, Ln_Lines, Ln_Matching,
 }
 
 @(private) ANIM_SCALES :: [4]f64{0, 0.5, 1, 1.5}
@@ -105,6 +108,7 @@ Settings :: struct {
 	di_single:      bool,
 	sc_mode:        int, // SHORTCUT_MODE_NAMES
 	disp:           Display_Settings, // Tela: night light and the volume/brightness pop-up (display.odin)
+	lnch:           Launcher_Settings, // Lançador (launcher.odin)
 	// Bloqueio e inatividade (lock.odin).
 	lock_enabled:       bool,
 	lock_on_suspend:    bool,
@@ -209,6 +213,7 @@ settings_load_values :: proc(w: ^Wizard) {
 		append(&s.names, name)
 	}
 	areas_load_values(w)
+	launcher_load_values(w)
 }
 
 @(private)
@@ -227,6 +232,7 @@ settings_destroy :: proc(w: ^Wizard) {
 	ted_destroy(w)
 	lay_destroy(w)
 	scripts_destroy(w)
+	launcher_destroy(w)
 	s^ = {}
 }
 
@@ -336,6 +342,8 @@ section_info :: proc(w: ^Wizard, s: Section) -> (icon: Icon, title, desc: string
 		return .Desktop, tr(w, "Área de trabalho", "Desktop"), tr(w, "Ícones de arquivos e atalhos sobre o papel de parede.", "File and shortcut icons over the wallpaper.")
 	case .Shortcuts:
 		return .Command, tr(w, "Atalhos", "Shortcuts"), tr(w, "Combinações de teclas para aplicativos, comandos, sites e ações das janelas.", "Key combinations for applications, commands, sites and window actions.")
+	case .Launcher:
+		return .Rocket, tr(w, "Lançador", "Launcher"), tr(w, "Abas, busca na web, arquivos, comandos e entradas próprias.", "Tabs, web search, files, commands and entries of your own.")
 	case .Keyboard:
 		return .Keyboard, tr(w, "Idioma e teclado", "Language and keyboard"), tr(w, "Idioma do milk, layout e variante do teclado, aplicados na hora.", "milk's language and the keyboard layout and variant, applied at once.")
 	case .Notifications:
@@ -428,6 +436,8 @@ draw_settings :: proc(w: ^Wizard, cv: ^tx.Canvas) {
 	case .Notifications:
 		ry := c.y
 		rows_notifications(w, cv, c, &ry)
+	case .Launcher:
+		draw_launcher_section(w, cv, c)
 	case .Clipboard:
 		ry := c.y
 		rows_clipboard(w, cv, c, &ry)
@@ -752,11 +762,13 @@ settings_action :: proc(w: ^Wizard, action: Action, arg: int) {
 			s.notif_position = opt
 			set_edit(w, "notifications.position", json.String(opt == 1 ? "bottom-right" : "top-right"))
 		case:
-			if !windows_choice(w, ctrl, opt) && !display_choice(w, ctrl, opt) { return }
+			if !windows_choice(w, ctrl, opt) && !display_choice(w, ctrl, opt) && !launcher_choice(w, ctrl, opt) { return }
 		}
 		settings_changed(w, .Values)
 	case .Win_Tab:
 		s.win_tab = clamp(arg, 0, 2)
+	case .Ln_Tab:
+		s.lnch.tab = clamp(arg, 0, 1)
 	case .Look_Tab:
 		s.look_tab = clamp(arg, 0, 1)
 	case .Avatar_Pick:
@@ -835,7 +847,7 @@ step_control :: proc(w: ^Wizard, ctrl: Control, dir: int) {
 		s.clip_max = clamp(s.clip_max + 10 * dir, 10, 500)
 		set_edit(w, "clipboard.maxItems", json.Integer(s.clip_max))
 	case:
-		if !windows_step(w, ctrl, dir) && !display_step(w, ctrl, dir) && !lock_step(w, ctrl, dir) { return }
+		if !windows_step(w, ctrl, dir) && !display_step(w, ctrl, dir) && !lock_step(w, ctrl, dir) && !launcher_step(w, ctrl, dir) { return }
 	}
 	settings_changed(w, .Values)
 }
@@ -866,7 +878,7 @@ toggle_control :: proc(w: ^Wizard, ctrl: Control) {
 		s.theme_apps = !s.theme_apps
 		set_edit(w, "appearance.themeApps", json.Boolean(s.theme_apps))
 	case:
-		if !windows_toggle(w, ctrl) && !display_toggle(w, ctrl) && !lock_toggle(w, ctrl) && !areas_toggle(w, ctrl) { return }
+		if !windows_toggle(w, ctrl) && !display_toggle(w, ctrl) && !lock_toggle(w, ctrl) && !areas_toggle(w, ctrl) && !launcher_toggle(w, ctrl) { return }
 	}
 	settings_changed(w, .Values)
 }
@@ -895,6 +907,7 @@ settings_text_buffer :: proc(w: ^Wizard) -> ^[dynamic]u8 {
 	case .Scr_Exec:      return &s.scr.ed.exec
 	case .Scr_Click:     return &s.scr.ed.click
 	case .Scr_Icon_Name: return &s.scr.ed.icon
+	case .Ln_Folder:     return &s.lnch.folder
 	}
 	return nil
 }
@@ -946,6 +959,8 @@ settings_text_edited :: proc(w: ^Wizard) {
 		return
 	case .Nl_From, .Nl_To, .Nl_Lat, .Nl_Lon:
 		if !display_text_edited(w, ctrl) { return } // saved once valid
+	case .Ln_Folder:
+		if !launcher_text_edited(w) { return }
 	case .Scr_Name, .Scr_Exec, .Scr_Click, .Scr_Icon_Name:
 		s.scr.ed.error = ""
 		return // saved with the script

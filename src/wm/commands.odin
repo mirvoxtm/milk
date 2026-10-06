@@ -5,10 +5,13 @@
 package wm
 
 import "core:fmt"
+import "core:log"
 import "core:os"
 import "core:strconv"
+import "core:strings"
 import xlib "vendor:x11/xlib"
 import config "../config"
+import tx "../tx"
 
 // Where and when the action was asked for (menus open there; the window
 // switcher watches the modifiers of `state` to know when to stop).
@@ -113,6 +116,8 @@ run_action :: proc(m: ^Manager, spec: string, target: ^Client, ctx: Action_Ctx) 
 		switcher_start(m, -1, ctx)
 	case "show-desktop":
 		toggle_show_desktop(m)
+	case "overview":
+		overview_toggle(m)
 	case "focus-next", "focus-prev":
 		a := Arg{i = name == "focus-next" ? 1 : -1}
 		focusstack(m, &a)
@@ -189,6 +194,9 @@ run_action :: proc(m: ^Manager, spec: string, target: ^Client, ctx: Action_Ctx) 
 	case "mute":            append(&m.system_requests, "mute")
 	case "brightness-up":   append(&m.system_requests, "brightness-up")
 	case "brightness-down": append(&m.system_requests, "brightness-down")
+	case "suspend":         append(&m.system_requests, "suspend")
+	case "reboot":          append(&m.system_requests, "reboot")
+	case "poweroff":        append(&m.system_requests, "poweroff")
 	case "settings":
 		exe, err := os.get_executable_path(context.temp_allocator)
 		if err != nil { break }
@@ -271,4 +279,42 @@ force_kill :: proc(m: ^Manager, c: ^Client) {
 	xlib.Sync(m.dpy, false)
 	xlib.SetErrorHandler(previous)
 	xlib.UngrabServer(m.dpy)
+}
+
+// milk addition: actions asked for from outside (`milk action NAME`, the
+// launcher's milk entries): lines appended to the _MILK_ACTION property of the
+// root window, which the window manager reads, deletes and runs. Commands
+// ("exec") are not taken this way.
+MILK_ACTION :: "_MILK_ACTION"
+
+@(private)
+run_requested_actions :: proc(m: ^Manager, time: xlib.Time) {
+	atom := tx.atom(m.c, MILK_ACTION)
+	type: xlib.Atom
+	format: i32
+	n, after: uint
+	data: rawptr
+	if xlib.GetWindowProperty(m.dpy, m.root, atom, 0, 1 << 16, true, xlib.AnyPropertyType, &type, &format, &n, &after, &data) != 0 || data == nil { return }
+	defer xlib.Free(data)
+	if format != 8 { return }
+	text := string(([^]u8)(data)[:n])
+	ctx := Action_Ctx{time = time}
+	if x, y, ok := getrootptr(m); ok { ctx.x, ctx.y = x, y }
+	for line in strings.split_lines_iterator(&text) {
+		spec := strings.trim_space(line)
+		name, arg := config.split_action(spec)
+		if spec == "" || name == "exec" { continue }
+		// Plain arguments only ("view 3", "settings bar"): "settings" puts its
+		// argument in a command line.
+		plain := true
+		for ch in arg {
+			if !(ch >= 'a' && ch <= 'z' || ch >= 'A' && ch <= 'Z' || ch >= '0' && ch <= '9' || ch == '-') { plain = false }
+		}
+		if !plain || !config.valid_wm_action(spec) {
+			log.warnf("wm: unknown action %q asked for through %s", spec, MILK_ACTION)
+			continue
+		}
+		log.debugf("wm: running %q (asked for from outside)", spec)
+		run_action(m, spec, m.selmon.sel, ctx)
+	}
 }

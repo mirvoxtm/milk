@@ -25,6 +25,7 @@ import menu "../menu"
 import nightlight "../nightlight"
 import notify "../notify"
 import tx "../tx"
+import wm "../wm"
 
 @(private="file") SESSION_LOCK     :: 1
 @(private="file") SESSION_SUSPEND  :: 2
@@ -136,6 +137,7 @@ session_tick :: proc(r: ^Runner) {
 		// Menus and panels hold grabs the lock screen needs, and would wait
 		// open behind it.
 		menu.close_all()
+		if r.manager != nil { wm.overview_finish(r.manager) }
 		if r.bar != nil { bar.close_popups(r.bar) }
 		if r.notes != nil { notify.close_panel(r.notes) }
 		if r.clips != nil { clip.close_panel(r.clips) }

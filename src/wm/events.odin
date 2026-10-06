@@ -224,6 +224,7 @@ configurerequest :: proc(m: ^Manager, e: ^xlib.XEvent) -> bool {
 configurenotify :: proc(m: ^Manager, e: ^xlib.XEvent) -> bool {
 	ev := &e.xconfigure
 	if ev.window != m.root { return false }
+	overview_finish(m) // its monitor may be gone
 	dirty := m.sw != ev.width || m.sh != ev.height
 	m.sw = ev.width
 	m.sh = ev.height
@@ -397,6 +398,10 @@ motionnotify :: proc(m: ^Manager, e: ^xlib.XEvent) -> bool {
 
 propertynotify :: proc(m: ^Manager, e: ^xlib.XEvent) -> bool {
 	ev := &e.xproperty
+	if ev.window == m.root && ev.state == .PropertyNewValue && ev.atom == tx.atom(m.c, MILK_ACTION) {
+		run_requested_actions(m, ev.time)
+		return true
+	}
 	if ev.window == m.root || ev.state == .PropertyDelete { return false }
 	c := wintoclient(m, ev.window)
 	if c == nil { return false }

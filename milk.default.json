@@ -15,7 +15,7 @@
     "commands": {
       "bluetooth": "",
       "clipboard": "",
-      "launcher": "rofi -show drun -theme \"$MILK_ROFI_THEME\"",
+      "launcher": "milk launcher",
       "network": "nm-connection-editor",
       "notifications": "",
       "recorder": "",
@@ -71,6 +71,25 @@
     "lockAfter": 600,
     "screenOffAfter": 900,
     "suspendAfter": 0
+  },
+  "launcher": {
+    "calculator": true,
+    "entries": [],
+    "fileSearch": true,
+    "filesFolder": "~",
+    "lines": 8,
+    "matching": "normal",
+    "milkEntries": true,
+    "nearButton": true,
+    "runCommands": true,
+    "tabs": [
+      "apps",
+      "windows",
+      "files"
+    ],
+    "terminalCommands": [],
+    "webSearch": "duckduckgo",
+    "width": 600
   },
   "linux": {
     "desktopIcons": {
@@ -143,7 +162,7 @@
     "focusNew": true,
     "gaps": 12,
     "keys": {},
-    "launcher": "rofi -show drun -theme \"$MILK_ROFI_THEME\"",
+    "launcher": "milk launcher",
     "masterCount": 1,
     "masterFactor": 0.55,
     "menu": null,

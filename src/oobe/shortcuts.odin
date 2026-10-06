@@ -60,6 +60,7 @@ ACTION_CHOICES := []Action_Choice{
 	{"window-list", "Lista de janelas", "Window list"},
 	{"switch-windows", "Alternar entre as janelas", "Switch between windows"},
 	{"show-desktop", "Mostrar a área de trabalho", "Show the desktop"},
+	{"overview", "Visão geral de todas as áreas", "Overview of every area"},
 	{"view-next", "Próxima área", "Next area"},
 	{"view-prev", "Área anterior", "Previous area"},
 	{"send-next", "Levar a janela para a próxima área", "Take the window to the next area"},
@@ -76,6 +77,7 @@ ACTION_CHOICES := []Action_Choice{
 	{"settings", "Configurações do milk", "milk settings"},
 	{"reload", "Recarregar milk.json", "Reload milk.json"},
 	{"lock", "Bloquear a tela", "Lock the screen"},
+	{"suspend", "Suspender", "Suspend"},
 }
 
 @(private)

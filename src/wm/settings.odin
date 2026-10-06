@@ -87,6 +87,8 @@ Settings :: struct {
 	rules:               []Rule,
 	bindings:            []Binding,
 	desktop_names:       []string, // tag_count entries
+	area_icons:          []rune,   // tag_count entries: workspaces.N.icon, 0 = none
+	overview_anim:       f64,      // seconds of the overview's zoom, 0 = none
 	// Floating mode.
 	floating:            bool,
 	title_height:        i32,
@@ -187,6 +189,11 @@ settings_from_config :: proc(cfg: ^config.Config) -> Settings {
 		}
 	}
 	s.desktop_names = names
+	s.area_icons = make([]rune, s.tag_count)
+	for i in 0 ..< s.tag_count {
+		if r, has := config.workspace_icon(cfg, i + 1); has { s.area_icons[i] = r }
+	}
+	s.overview_anim = config.anim_duration(cfg, 0.36)
 
 	floating_from_config(cfg, &s)
 	return s
@@ -368,6 +375,7 @@ settings_destroy :: proc(s: ^Settings) {
 	delete(s.bindings)
 	for n in s.desktop_names { delete(n) }
 	delete(s.desktop_names)
+	delete(s.area_icons)
 	delete(s.title_layout)
 	delete(s.title_font)
 	for k in s.key_actions { delete(k.action) }

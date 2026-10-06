@@ -41,6 +41,7 @@ Win_Command :: enum u8 {
 @(private) IC_APPS     :: 0xEBB6
 @(private) IC_WINDOW   :: 0xEFE6
 @(private) IC_GRID     :: 0xEDBA
+@(private) IC_OVERVIEW :: 0xEF95 // Tabler "layout-board"
 @(private) IC_PHOTO    :: 0xEB0A
 @(private) IC_SETTINGS :: 0xEB20
 @(private) IC_REFRESH  :: 0xEB13
@@ -167,6 +168,7 @@ default_root_menu :: proc(m: ^Manager, items: ^[dynamic]menu.Item) {
 	sep(items)
 	append(items, menu.Item{label = tr(m, "Janelas", "Windows"), icon = IC_WINDOW, items = window_list_items(m)})
 	append(items, menu.Item{label = tr(m, "Áreas", "Areas"), icon = IC_GRID, items = area_list_items(m)})
+	action(m, items, tr(m, "Visão geral", "Overview"), "overview", IC_OVERVIEW)
 	if m.settings.desktop_icons {
 		sep(items)
 		action(m, items, tr(m, "Nova pasta", "New folder"), "desktop-new-folder", IC_FOLDER_PLUS)

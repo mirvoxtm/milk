@@ -146,6 +146,7 @@ restack :: proc(m: ^Manager, mon: ^Monitor) {
 		}
 	}
 	grips_restack(m)
+	overview_raise(m) // milk: the overview stays above the windows it shows
 	xlib.Sync(m.dpy, false)
 	discard_enter_events(m)
 	m.ewmh.stacking_dirty = true

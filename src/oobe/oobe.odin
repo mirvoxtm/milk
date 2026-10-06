@@ -53,7 +53,7 @@ Action :: enum {
 	Bar_Choice,
 	// Settings app
 	Wm_Choice, Di_Choice, // wizard: tiling/floating, desktop icons
-	Section, Step, Toggle, Choice, Text_Field, Rerun_Wizard, Open_Config, Update_Milk, Fx_Open, Win_Tab,
+	Section, Step, Toggle, Choice, Text_Field, Rerun_Wizard, Open_Config, Update_Milk, Fx_Open, Win_Tab, Ln_Tab,
 	Look_Tab, Avatar_Pick, Avatar_Tile, Avatar_Remove, Avatar_Back, // settings → Appearance (avatar.odin)
 	Lock_Now, // settings → lock.odin
 	Area_Icon, Area_Icon_Pick, Area_Icon_Back, // settings → areas.odin
@@ -626,7 +626,7 @@ do_action :: proc(w: ^Wizard, action: Action, arg: int) {
 	case .Di_Choice:
 		w.desktop_icons = !w.desktop_icons
 		w.dirty = true
-	case .Section, .Step, .Toggle, .Choice, .Text_Field, .Rerun_Wizard, .Open_Config, .Update_Milk, .Fx_Open, .Win_Tab, .Lock_Now,
+	case .Section, .Step, .Toggle, .Choice, .Text_Field, .Rerun_Wizard, .Open_Config, .Update_Milk, .Fx_Open, .Win_Tab, .Ln_Tab, .Lock_Now,
 	     .Look_Tab, .Avatar_Pick, .Avatar_Tile, .Avatar_Remove, .Avatar_Back:
 		settings_action(w, action, arg)
 	case .Area_Icon, .Area_Icon_Pick, .Area_Icon_Back:

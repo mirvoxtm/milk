@@ -61,6 +61,7 @@ DEFAULT_KEYS := []Default_Key{
 	{"view-all", "mod+0", "view-all", 0, .Areas, "Ver todas as áreas", "Show every area"},
 	{"send-all", "mod+shift+0", "send-all", 0, .Areas, "Pôr a janela em todas as áreas", "Put the window on every area"},
 	{"view-last", "mod+Tab", "view-last", 0, .Areas, "Voltar para a última área", "Back to the last area"},
+	{"overview", "mod+shift+Tab", "overview", 0, .Areas, "Visão geral de todas as áreas", "Overview of every area"},
 	{"view-prev", "ctrl+alt+Left", "view-prev", 2, .Areas, "Área anterior", "Previous area"},
 	{"view-next", "ctrl+alt+Right", "view-next", 2, .Areas, "Próxima área", "Next area"},
 	{"send-prev", "ctrl+alt+shift+Left", "send-prev", 2, .Areas, "Levar a janela para a área anterior", "Take the window to the previous area"},
