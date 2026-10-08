@@ -6,6 +6,7 @@ import "core:encoding/json"
 import "core:fmt"
 import "core:log"
 import "core:os"
+import "core:strings"
 import tx "../tx"
 
 // The delays the steppers walk through (seconds; 0 = never).
@@ -131,6 +132,7 @@ lock_toggle :: proc(w: ^Wizard, ctrl: Control) -> bool {
 lock_now :: proc(w: ^Wizard) {
 	exe, err := os.get_executable_path(context.temp_allocator)
 	if err != nil { return }
+	exe = strings.trim_suffix(exe, " (deleted)")
 	desc := os.Process_Desc{command = {exe, "lock", "--config", w.config_path, "--runtime-root", w.runtime_root}}
 	if p, perr := os.process_start(desc); perr == nil {
 		_ = p

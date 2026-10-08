@@ -218,6 +218,10 @@ cmd_doctor :: proc(opts: ^Options) -> int {
 		say(&dr, "fail", fmt.tprintf("%s: %s", opts.config_path, err), "fix it, or move it away and run milk setup")
 	} else {
 		say(&dr, "ok", fmt.tprintf("%s is valid", opts.config_path))
+		if len(cfg.unknown_keys) > 0 {
+			say(&dr, "warn", fmt.tprintf("milk.json has keys no option reads (ignored): %s", strings.join(cfg.unknown_keys, ", ", context.temp_allocator)),
+			    "an older or newer milk wrote them; they can be deleted")
+		}
 	}
 	if os.is_directory(opts.runtime_root) {
 		say(&dr, "ok", fmt.tprintf("runtime folder: %s", opts.runtime_root))

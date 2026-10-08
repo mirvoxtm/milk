@@ -204,7 +204,7 @@ settings_apply :: proc(b: ^Bar, action: Settings_Action, dir: int) {
 			log.warnf("Bar settings: cannot find the milk executable: %v", err)
 			return
 		}
-		cmd := fmt.tprintf("%s settings", shell_quote(exe))
+		cmd := fmt.tprintf("%s settings", shell_quote(strings.trim_suffix(exe, " (deleted)")))
 		if b.config_path != "" { cmd = fmt.tprintf("%s --config %s", cmd, shell_quote(b.config_path)) }
 		run_detached(b, cmd)
 	case .Edit:

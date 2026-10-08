@@ -441,6 +441,9 @@ cmd_start :: proc(opts: ^Options) -> int {
 		}
 	}
 	context.logger = make_logger(opts)
+	if len(cfg.unknown_keys) > 0 {
+		log.warnf("milk.json: ignoring %s (no option of this milk reads them)", strings.join(cfg.unknown_keys, ", ", context.temp_allocator))
+	}
 	code := run(opts, cfg)
 	// SIGUSR1 (`milk restart`, `milk update`): everything was let go, start again in this process.
 	if g_restart { restart_self() }
@@ -575,6 +578,8 @@ run :: proc(opts: ^Options, cfg: ^config.Config) -> int {
 	}
 	tx.io_error_cleanup = proc() { remove_pid(g_pid_file) }
 	defer tx.disconnect(c)
+	// Before any program starts: apps size themselves as milk does (dpi.odin).
+	xft_dpi_publish(c)
 
 	cfg := cfg
 	apply_keyboard(cfg)

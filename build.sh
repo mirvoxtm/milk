@@ -3,5 +3,10 @@
 set -e
 dir=$(dirname "$(readlink -f "$0")")
 mkdir -p "$dir/bin"
-odin build "$dir/src/milk" -out:"$dir/bin/milk" -o:speed -vet ${MILK_ODIN_FLAGS:-}
+# Built aside and renamed into place: a program started meanwhile (a build may
+# run in the background) finds either the old binary or the new one, whole.
+tmp="$dir/bin/milk.build.$$"
+trap 'rm -f "$tmp"' EXIT
+odin build "$dir/src/milk" -out:"$tmp" -o:speed -vet ${MILK_ODIN_FLAGS:-}
+mv -f "$tmp" "$dir/bin/milk"
 echo "built $dir/bin/milk"

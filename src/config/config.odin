@@ -537,6 +537,7 @@ Config :: struct {
 	idle:          Idle_Options, // lock screen and idle (parse_idle_lock)
 	lock:          Lock_Options,
 	launcher:      Launcher_Options, // launcher.odin
+	unknown_keys:  []string, // "launcher.urlBrowser": keys in milk.json no option reads (ignored)
 	allocator:  runtime_allocator,
 }
 
@@ -644,8 +645,9 @@ IDLE_MAX_SECONDS :: 24 * 3600
 // Loading
 // ---------------------------------------------------------------------------
 Loader :: struct {
-	err:  string,
-	path: string,
+	err:     string,
+	path:    string,
+	unknown: [dynamic]string, // "scope.key" for each key no milk option reads (reject_unknown)
 }
 
 @(private)
@@ -726,12 +728,16 @@ get_object :: proc(l: ^Loader, obj: json.Object, key, scope: string) -> (json.Ob
 	return o, true
 }
 
+// Keys no option reads are left alone, not an error: the settings app only
+// patches the keys it knows, so an option a newer or older milk dropped stays
+// in milk.json, and refusing it would keep the session from starting at all.
+// They are listed in Config.unknown_keys (logged at start, shown by milk doctor).
 @(private)
 reject_unknown :: proc(l: ^Loader, obj: json.Object, allowed: []string, scope: string) -> bool {
 	for key, _ in obj {
 		known := false
 		for a in allowed { if a == key { known = true; break } }
-		if !known { return fail(l, "Unknown key in %s: %s", scope, key) }
+		if !known { append(&l.unknown, fmt.aprintf("%s.%s", scope, key)) }
 	}
 	return true
 }
@@ -1379,6 +1385,7 @@ load :: proc(path: string) -> (cfg: ^Config, err: string) {
 
 	cfg = new(Config)
 	ok := parse_root(&l, root, cfg)
+	cfg.unknown_keys = l.unknown[:]
 	if !ok {
 		destroy(cfg)
 		return nil, l.err
@@ -1514,5 +1521,7 @@ destroy :: proc(cfg: ^Config) {
 	delete(w.mouse)
 	destroy_menu_items(w.menu)
 	destroy_night_light_osd(cfg) // nightlight.odin
+	for k in cfg.unknown_keys { delete(k) }
+	delete(cfg.unknown_keys)
 	free(cfg)
 }

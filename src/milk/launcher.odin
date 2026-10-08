@@ -44,6 +44,7 @@ cmd_launcher :: proc(opts: ^Options) -> int {
 		fmt.eprintln("milk launcher: cannot tell where this milk is")
 		return 1
 	}
+	exe = strings.trim_suffix(exe, " (deleted)") // rofi runs it again for each pick
 	lo := config.default_launcher()
 	lang := config.Language.English
 	cfg, cerr := config.load(opts.config_path)
@@ -198,6 +199,7 @@ open_launcher :: proc(r: ^Runner, anchor: tx.Rect) -> bool {
 	if len(words) < 2 || words[0] != "milk" || words[1] != "launcher" { return false }
 	exe, err := os.get_executable_path(context.temp_allocator)
 	if err != nil { return false }
+	exe = strings.trim_suffix(exe, " (deleted)") // rebuilt since milk started: the new binary
 	argv := make([dynamic]string, context.temp_allocator)
 	append(&argv, exe, "launcher")
 	append(&argv, ..words[2:])
@@ -322,7 +324,7 @@ exec_self :: proc(args: []string) {
 	exe, err := os.get_executable_path(context.temp_allocator)
 	if err != nil { return }
 	argv := make([dynamic]string, context.temp_allocator)
-	append(&argv, exe)
+	append(&argv, strings.trim_suffix(exe, " (deleted)"))
 	append(&argv, ..args)
 	exec_argv(argv[:])
 }

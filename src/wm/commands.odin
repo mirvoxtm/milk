@@ -200,7 +200,7 @@ run_action :: proc(m: ^Manager, spec: string, target: ^Client, ctx: Action_Ctx) 
 	case "settings":
 		exe, err := os.get_executable_path(context.temp_allocator)
 		if err != nil { break }
-		cmd := fmt.tprintf("'%s' settings", exe)
+		cmd := fmt.tprintf("'%s' settings", strings.trim_suffix(exe, " (deleted)"))
 		if arg != "" { cmd = fmt.tprintf("%s %s", cmd, arg) }
 		spawn_command(m, cmd)
 	case "reload": m.reload = true

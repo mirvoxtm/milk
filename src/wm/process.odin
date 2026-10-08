@@ -63,10 +63,13 @@ reap_children :: proc(m: ^Manager) {
 // milk: "milk …" at the start of a command (the default launcher, "milk
 // launcher") is the milk that runs, not whatever the PATH finds: no rebuild
 // check through the clone's launcher script, and no dependence on ~/.local/bin.
+// After a rebuild the running image's file is gone ("/path/bin/milk (deleted)"):
+// the new binary at that path runs instead.
 expand_milk :: proc(cmd: string) -> string {
 	s := strings.trim_left_space(cmd)
 	if s != "milk" && !strings.has_prefix(s, "milk ") { return cmd }
 	exe, err := os.get_executable_path(context.temp_allocator)
+	exe = strings.trim_suffix(exe, " (deleted)")
 	if err != nil || strings.index_byte(exe, '\'') >= 0 { return cmd }
 	return fmt.tprintf("'%s'%s", exe, s[len("milk"):])
 }
