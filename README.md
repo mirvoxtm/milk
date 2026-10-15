@@ -42,6 +42,12 @@ as of version 1.1.0, milk now also supports desktop icons with future support pl
 
 with matugen, the color scheme can even be picked up by your wallpaper!
 
+## monitors
+
+settings → display → monitors shows your monitors as they're arranged: drag them around, pick each one's resolution, refresh rate and rotation, turn one off or make it the primary (the bar lives there). apply shows it right away and asks if you want to keep it - if you don't answer in 15 seconds, everything goes back to how it was.
+
+keep saves that layout for that exact set of monitors, and milk puts it back whenever they're plugged in again (at login too). a set milk has never seen gets extended to the right. the scale tab sets how big apps draw (100% to 200%) and lists the layouts you saved.
+
 ## updating
 
 `milk update` pulls milk, spoil, lactase and snippy, rebuilds them and restarts milk in place - your windows stay open. the same lives in settings → about → update milk. `milk update check` only tells you whether there's something new.

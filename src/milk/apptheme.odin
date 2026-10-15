@@ -98,9 +98,14 @@ apptheme_apply :: proc(r: ^Runner) {
 	// The colours at app start (gtk.css) only where they cannot come live from the theme.
 	gtk_css_import(join({ch, "gtk-3.0", "gtk.css"}), !managed)
 	if owner {
-		settings := make([dynamic][2]string, context.temp_allocator)
-		if managed { append(&settings, [2]string{"Net/ThemeName", a.alt ? GTK_THEMES[1] : GTK_THEMES[0]}) }
-		if icons := cfg.linux.shortcuts.icon_theme; icons != "" { append(&settings, [2]string{"Net/IconThemeName", icons}) }
+		settings := make([dynamic]XSettings_Entry, context.temp_allocator)
+		if managed { append(&settings, XSettings_Entry{name = "Net/ThemeName", value = a.alt ? GTK_THEMES[1] : GTK_THEMES[0]}) }
+		if icons := cfg.linux.shortcuts.icon_theme; icons != "" { append(&settings, XSettings_Entry{name = "Net/IconThemeName", value = icons}) }
+		// The apps' scale (displays.scale, or the user's Xft.dpi; dpi.odin): GTK follows it live.
+		window_scale, dpi, unscaled := xsettings_scale()
+		append(&settings, XSettings_Entry{name = "Xft/DPI", number = dpi, is_number = true})
+		append(&settings, XSettings_Entry{name = "Gdk/WindowScalingFactor", number = window_scale, is_number = true})
+		append(&settings, XSettings_Entry{name = "Gdk/UnscaledDPI", number = unscaled, is_number = true})
 		xsettings_set(&a.xs, r.c, settings[:])
 		a.published = managed
 	}

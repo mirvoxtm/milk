@@ -53,6 +53,37 @@ updategeom :: proc(m: ^Manager) -> bool {
 	nn := len(unique)
 	n := count_monitors(m)
 
+	// milk: each monitor keeps its state (tags, layout, clients) with its
+	// output when monitors come and go, instead of dwm's by-position match.
+	// The monitors whose output is gone go last (they are the ones removed, or
+	// reused for new outputs), and the new list follows the monitors kept.
+	if n > 0 {
+		kept := make([dynamic]^Monitor, context.temp_allocator)
+		gone := make([dynamic]^Monitor, context.temp_allocator)
+		used := make([]bool, nn, context.temp_allocator)
+		ordered := make([dynamic]tx.Monitor, 0, nn, context.temp_allocator)
+		for mon := m.mons; mon != nil; mon = mon.next {
+			match := -1
+			for u, j in unique {
+				if !used[j] && mon.name != "" && u.name == mon.name { match = j; break }
+			}
+			if match < 0 {
+				append(&gone, mon)
+				continue
+			}
+			used[match] = true
+			append(&kept, mon)
+			append(&ordered, unique[match])
+		}
+		for u, j in unique { if !used[j] { append(&ordered, u) } }
+		all := make([dynamic]^Monitor, 0, n, context.temp_allocator)
+		append(&all, ..kept[:])
+		append(&all, ..gone[:])
+		for mon, i in all { mon.next = i + 1 < len(all) ? all[i + 1] : nil }
+		m.mons = all[0]
+		copy(unique[:], ordered[:])
+	}
+
 	// New monitors if nn > n.
 	for _ in n ..< nn {
 		last := m.mons
@@ -62,9 +93,10 @@ updategeom :: proc(m: ^Manager) -> bool {
 	i := 0
 	for mon := m.mons; i < nn && mon != nil; mon = mon.next {
 		u := unique[i]
+		if mon.num != i { dirty = true }
+		mon.num = i
 		if i >= n || u.rect.x != mon.mx || u.rect.y != mon.my || u.rect.w != mon.mw || u.rect.h != mon.mh {
 			dirty = true
-			mon.num = i
 			mon.mx = u.rect.x; mon.wx = u.rect.x
 			mon.my = u.rect.y; mon.wy = u.rect.y
 			mon.mw = u.rect.w; mon.ww = u.rect.w

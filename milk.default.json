@@ -65,6 +65,11 @@
       "warning": "#B5473A"
     }
   },
+  "displays": {
+    "autoApply": true,
+    "profiles": {},
+    "scale": 1
+  },
   "idle": {
     "dimAfter": 570,
     "inhibitFullscreen": false,

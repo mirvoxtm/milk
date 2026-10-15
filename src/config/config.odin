@@ -537,6 +537,7 @@ Config :: struct {
 	idle:          Idle_Options, // lock screen and idle (parse_idle_lock)
 	lock:          Lock_Options,
 	launcher:      Launcher_Options, // launcher.odin
+	displays:      Display_Options,  // monitors and the apps' scale (displays.odin)
 	unknown_keys:  []string, // "launcher.urlBrowser": keys in milk.json no option reads (ignored)
 	allocator:  runtime_allocator,
 }
@@ -1469,6 +1470,7 @@ parse_root :: proc(l: ^Loader, root: json.Object, cfg: ^Config) -> bool {
 	parse_extras(l, root, cfg) or_return
 	parse_night_light_osd(l, root, cfg) or_return // nightlight.odin
 	parse_launcher(l, root, &cfg.launcher) or_return // launcher.odin
+	parse_displays(l, root, cfg) or_return // displays.odin
 	return true
 }
 
@@ -1521,6 +1523,7 @@ destroy :: proc(cfg: ^Config) {
 	delete(w.mouse)
 	destroy_menu_items(w.menu)
 	destroy_night_light_osd(cfg) // nightlight.odin
+	destroy_displays(cfg) // displays.odin
 	for k in cfg.unknown_keys { delete(k) }
 	delete(cfg.unknown_keys)
 	free(cfg)

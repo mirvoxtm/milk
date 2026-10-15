@@ -24,6 +24,7 @@ import bar "../bar"
 import clip "../clip"
 import config "../config"
 import desktop "../desktop"
+import display "../display"
 import nightlight "../nightlight"
 import polkit "../polkit"
 import lock "../lock"
@@ -467,6 +468,7 @@ Runner :: struct {
 	lactase_children: [dynamic]posix.pid_t, // lactase launchers not reaped yet
 	apps:             App_Theme,           // GTK/Qt apps in milk's colours (apptheme.odin)
 	agent:            ^polkit.Agent,       // the polkit authentication agent (nil: off)
+	displays:         ^display.Manager,    // monitor layouts: profiles on hotplug (display/manager.odin)
 }
 
 // The strip the bar occupies on its monitor, which the window manager must keep free.
@@ -579,7 +581,7 @@ run :: proc(opts: ^Options, cfg: ^config.Config) -> int {
 	tx.io_error_cleanup = proc() { remove_pid(g_pid_file) }
 	defer tx.disconnect(c)
 	// Before any program starts: apps size themselves as milk does (dpi.odin).
-	xft_dpi_publish(c)
+	xft_dpi_apply(c, cfg.displays.scale)
 
 	cfg := cfg
 	apply_keyboard(cfg)
@@ -608,6 +610,9 @@ run :: proc(opts: ^Options, cfg: ^config.Config) -> int {
 	if cfg.bar.enabled && !opts.no_bar { mask |= bar.ROOT_EVENT_MASK }
 	if cfg.wm.enabled && !opts.no_wm { mask |= wm.ROOT_EVENT_MASK }
 	xlib.SelectInput(c.dpy, c.root, mask)
+	// The saved layout of the monitors connected, before anything reads them.
+	r.displays = display.manager_create(c, cfg)
+	defer display.manager_destroy(r.displays)
 
 	// The window manager comes first: the bar and the desktop layer read the
 	// EWMH properties it publishes.
@@ -695,6 +700,7 @@ loop :: proc(r: ^Runner) {
 			if session_event(r, &ev) { continue }
 			// The password dialog holds the keyboard: its keys never reach the shortcuts.
 			if polkit.handle_event(r.agent, &ev) { continue }
+			display.manager_event(r.displays, &ev) // never consumes: night light reads RandR events too
 			if r.manager != nil { wm.handle_event(r.manager, &ev) }
 			desktop.handle_event(r.daemon, &ev)
 			if r.bar != nil { bar.handle_event(r.bar, &ev) }
@@ -743,6 +749,7 @@ loop :: proc(r: ^Runner) {
 		compositor_reap(r)
 		reap_adopted()
 		apptheme_reap(r)
+		display.manager_tick(r.displays, now)
 		if r.manager != nil { wm.tick(r.manager, now) }
 		desktop.tick(r.daemon, now)
 		if r.bar != nil { bar.tick(r.bar, now) }
@@ -777,6 +784,7 @@ loop :: proc(r: ^Runner) {
 		}
 		if lt := lock.next_timeout(r.idle, now); lt >= 0 && (timeout < 0 || lt < timeout) { timeout = lt }
 		if pt := polkit.next_timeout(r.agent, now); pt >= 0 && (timeout < 0 || pt < timeout) { timeout = pt }
+		if dt := display.manager_timeout(r.displays, now); dt >= 0 && (timeout < 0 || dt < timeout) { timeout = dt }
 
 		// Everything allocated from the temp allocator during this iteration is
 		// released here; the poll set is built afterwards so it stays valid.
@@ -835,6 +843,7 @@ reload :: proc(r: ^Runner) {
 	}
 	old := r.cfg
 	r.cfg = cfg
+	display.manager_reload(r.displays, cfg)
 	if r.manager != nil {
 		monitor, top, bottom := bar_reservation(cfg, r.opts)
 		wm.set_reserved(r.manager, monitor, top, bottom)
@@ -857,6 +866,7 @@ reload :: proc(r: ^Runner) {
 	lock.reload(r.idle, cfg)
 	polkit.reload(r.agent, cfg)
 	apply_keyboard(cfg)
+	xft_dpi_apply(r.c, cfg.displays.scale)
 	write_rofi_theme(cfg)
 	apptheme_apply(r)
 	oobe.refresh_wallpaper_theme_files(cfg)
@@ -891,6 +901,7 @@ reload_theme :: proc(r: ^Runner) {
 	}
 	old := r.cfg
 	r.cfg = cfg
+	display.manager_reload(r.displays, cfg)
 	if r.manager != nil { wm.reload(r.manager, cfg) }
 	desktop.retheme(r.daemon, cfg)
 	if r.bar != nil { bar.retheme(r.bar, cfg) }

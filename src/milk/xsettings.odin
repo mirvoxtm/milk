@@ -25,8 +25,15 @@ XSettings :: struct {
 
 @(private)
 XSetting :: struct {
-	name, value: string, // owned
-	serial:      u32,     // when it last changed
+	using entry: XSettings_Entry, // strings owned
+	serial:      u32,             // when it last changed
+}
+
+// One setting: a string ("Net/ThemeName") or, with is_number, an integer ("Xft/DPI").
+XSettings_Entry :: struct {
+	name, value: string,
+	number:      i32,
+	is_number:   bool,
 }
 
 // Become the manager unless another program is; true when milk is it.
@@ -84,13 +91,13 @@ xsettings_stop :: proc(xs: ^XSettings, c: ^tx.Connection) {
 	xs.values = nil
 }
 
-// Publish exactly `settings` (name, value pairs); unchanged values are not
-// written again. Returns true when something changed.
-xsettings_set :: proc(xs: ^XSettings, c: ^tx.Connection, settings: [][2]string) -> bool {
+// Publish exactly `settings`; unchanged values are not written again.
+// Returns true when something changed.
+xsettings_set :: proc(xs: ^XSettings, c: ^tx.Connection, settings: []XSettings_Entry) -> bool {
 	same := len(settings) == len(xs.values)
 	if same {
 		for s, i in settings {
-			if xs.values[i].name != s[0] || xs.values[i].value != s[1] { same = false; break }
+			if xs.values[i].entry != s { same = false; break }
 		}
 	}
 	if same { return false }
@@ -99,9 +106,9 @@ xsettings_set :: proc(xs: ^XSettings, c: ^tx.Connection, settings: [][2]string) 
 	for s in settings {
 		changed := xs.serial
 		for v in xs.values {
-			if v.name == s[0] && v.value == s[1] { changed = v.serial }
+			if v.entry == s { changed = v.serial }
 		}
-		append(&next, XSetting{strings.clone(s[0]), strings.clone(s[1]), changed})
+		append(&next, XSetting{entry = {strings.clone(s.name), strings.clone(s.value), s.number, s.is_number}, serial = changed})
 	}
 	for v in xs.values {
 		delete(v.name)
@@ -128,7 +135,7 @@ xsettings_event :: proc(xs: ^XSettings, c: ^tx.Connection, ev: ^xlib.XEvent) -> 
 }
 
 // The _XSETTINGS_SETTINGS property: byte order, serial, count, then each
-// setting (string type) padded to 4 bytes.
+// setting (integer or string type) padded to 4 bytes.
 @(private)
 xsettings_write :: proc(xs: ^XSettings, c: ^tx.Connection) {
 	b := make([dynamic]u8, context.temp_allocator)
@@ -147,11 +154,15 @@ xsettings_write :: proc(xs: ^XSettings, c: ^tx.Connection) {
 	put32(&b, xs.serial)
 	put32(&b, u32(len(xs.values)))
 	for v in xs.values {
-		append(&b, 1, 0) // XSettingsTypeString, unused
+		append(&b, v.is_number ? 0 : 1, 0) // XSettingsTypeInteger or XSettingsTypeString, unused
 		put16(&b, u16(len(v.name)))
 		append(&b, ..transmute([]u8)v.name)
 		pad(&b)
 		put32(&b, v.serial)
+		if v.is_number {
+			put32(&b, u32(v.number))
+			continue
+		}
 		put32(&b, u32(len(v.value)))
 		append(&b, ..transmute([]u8)v.value)
 		pad(&b)

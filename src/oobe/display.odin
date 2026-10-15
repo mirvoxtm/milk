@@ -30,6 +30,7 @@ import tx "../tx"
 
 @(private)
 Display_Settings :: struct {
+	tab:           int, // 0 monitors, 1 scale and connection, 2 night light (and the pop-up)
 	nl_enabled:    bool,
 	nl_mode:       int, // NL_MODE_NAMES
 	nl_temp:       int, // kelvin
@@ -132,6 +133,21 @@ hhmm :: proc(unix: f64) -> string {
 // ---------------------------------------------------------------------------
 @(private)
 draw_display_section :: proc(w: ^Wizard, cv: ^tx.Canvas, c: tx.Rect) {
+	d := &w.set.disp
+	segmented(w, cv, {c.x, c.y, min(i32(600), c.w), 40},
+	          {tr(w, "Monitores", "Monitors"), tr(w, "Escala e conexão", "Scale and connection"), tr(w, "Luz noturna", "Night light")},
+	          {.Desktop, .Zoom_In, .Moon}, d.tab, .Disp_Tab)
+	body := tx.Rect{c.x, c.y + 56, c.w, c.h - 56}
+	switch d.tab {
+	case 0: draw_monitors_tab(w, cv, body) // monitors.odin
+	case 1: draw_scale_tab(w, cv, body)
+	case:   draw_night_light_tab(w, cv, body)
+	}
+}
+
+// Night light and the volume/brightness pop-up.
+@(private)
+draw_night_light_tab :: proc(w: ^Wizard, cv: ^tx.Canvas, c: tx.Rect) {
 	d := &w.set.disp
 	th := &w.theme
 	y := c.y

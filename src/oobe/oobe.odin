@@ -64,9 +64,11 @@ Action :: enum {
 	Scr_New, Scr_Edit, Scr_Example, Scr_Save, Scr_Cancel, Scr_Delete, Scr_Test, Scr_Mode, Scr_Icon, Scr_Icon_Back, Scr_Icon_Pick, // barscripts.odin
 	Language,
 	Display_Ui, // Settings → Tela: the temperature slider, the time zone button (display.odin)
+	Disp_Tab, Mon_Select, Mon_Mode, Mon_Mode_Back, Mon_Mode_Pick, Mon_Primary, Mon_Apply, Mon_Undo, Mon_Keep, Mon_Revert,
+	Mon_Profile_Delete, // Settings → Tela → monitors (monitors.odin)
 }
 
-@(private) Scroll_Id :: enum { None, Layouts, Variants, Wallpapers, Shortcuts, Apps, Actions, Themes, Zone_Start, Zone_Center, Zone_End, Zone_Avail, Avatars, Scripts }
+@(private) Scroll_Id :: enum { None, Layouts, Variants, Wallpapers, Shortcuts, Apps, Actions, Themes, Zone_Start, Zone_Center, Zone_End, Zone_Avail, Avatars, Scripts, Monitors }
 
 @(private) Field :: enum { None, Search, Test, Text }
 
@@ -421,6 +423,7 @@ wizard_loop :: proc(w: ^Wizard) {
 
 @(private)
 handle_event :: proc(w: ^Wizard, ev: ^xlib.XEvent) {
+	if w.mode == .Settings && monitors_event(w, ev) { return } // RandR (monitors.odin)
 	#partial switch ev.type {
 	case .MapNotify:
 		if ev.xmap.window == w.win && w.mode == .Wizard {
@@ -436,6 +439,7 @@ handle_event :: proc(w: ^Wizard, ev: ^xlib.XEvent) {
 		if w.mode == .Settings {
 			theme_drag(w, ev.xmotion.x, .Button1Mask in ev.xmotion.state)
 			display_drag(w, ev.xmotion.x, .Button1Mask in ev.xmotion.state)
+			monitors_drag(w, ev.xmotion.x, ev.xmotion.y, .Button1Mask in ev.xmotion.state)
 		}
 		on_motion(w, ev.xmotion.x, ev.xmotion.y)
 	case .LeaveNotify:
@@ -533,6 +537,7 @@ scroll_ptr :: proc(w: ^Wizard, id: Scroll_Id) -> ^i32 {
 	case .Zone_Avail: return &w.set.lay.scroll[3]
 	case .Avatars:    return &w.set.avatar.scroll
 	case .Scripts:    return &w.set.scr.scroll
+	case .Monitors:   return &w.set.mon.scroll
 	}
 	return nil
 }
@@ -646,6 +651,9 @@ do_action :: proc(w: ^Wizard, action: Action, arg: int) {
 		scripts_action(w, action, arg)
 	case .Display_Ui:
 		display_action(w, arg)
+	case .Disp_Tab, .Mon_Select, .Mon_Mode, .Mon_Mode_Back, .Mon_Mode_Pick, .Mon_Primary, .Mon_Apply, .Mon_Undo, .Mon_Keep, .Mon_Revert,
+	     .Mon_Profile_Delete:
+		monitors_action(w, action, arg)
 	}
 }
 

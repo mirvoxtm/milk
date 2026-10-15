@@ -56,6 +56,8 @@ Control :: enum {
 	// launcher.odin
 	Ln_Milk_Entries, Ln_Calculator, Ln_Commands, Ln_Engine, Ln_Files, Ln_Folder,
 	Ln_Tab_Windows, Ln_Tab_Files, Ln_Tab_Run, Ln_Near, Ln_Width, Ln_Lines, Ln_Matching,
+	// monitors.odin
+	Mon_Enabled, Mon_Rate, Mon_Rotation, Dsp_Scale, Dsp_Auto,
 }
 
 @(private) ANIM_SCALES :: [4]f64{0, 0.5, 1, 1.5}
@@ -108,6 +110,7 @@ Settings :: struct {
 	di_single:      bool,
 	sc_mode:        int, // SHORTCUT_MODE_NAMES
 	disp:           Display_Settings, // Tela: night light and the volume/brightness pop-up (display.odin)
+	mon:            Monitors_State,   // Tela → Monitores and Escala (monitors.odin)
 	lnch:           Launcher_Settings, // Lançador (launcher.odin)
 	// Bloqueio e inatividade (lock.odin).
 	lock_enabled:       bool,
@@ -172,6 +175,7 @@ run_settings :: proc(c: ^tx.Connection, config_path: string, runtime_root: strin
 	}
 	if !settings_open_window(w) { return false }
 	wizard_loop(w)
+	monitors_finish(w) // a layout nobody kept goes back
 	if w.set.save_at > 0 { settings_save(w) }
 	close_window(w)
 	thumbs_stop(w)
@@ -214,6 +218,7 @@ settings_load_values :: proc(w: ^Wizard) {
 	}
 	areas_load_values(w)
 	launcher_load_values(w)
+	monitors_load(w)
 }
 
 @(private)
@@ -233,6 +238,7 @@ settings_destroy :: proc(w: ^Wizard) {
 	lay_destroy(w)
 	scripts_destroy(w)
 	launcher_destroy(w)
+	monitors_destroy(w)
 	s^ = {}
 }
 
@@ -335,7 +341,8 @@ section_info :: proc(w: ^Wizard, s: Section) -> (icon: Icon, title, desc: string
 	case .Effects:
 		return .Sparkles, tr(w, "Efeitos", "Effects"), tr(w, "Sombras, animações e transparência com o lactase, o compositor do milk.", "Shadows, animations and transparency with lactase, milk's compositor.")
 	case .Display:
-		return .Sun, tr(w, "Tela", "Display"), tr(w, "Luz noturna e o aviso de volume e brilho.", "Night light and the volume and brightness pop-up.")
+		return .Devices, tr(w, "Tela", "Display"), tr(w, "Monitores, escala dos aplicativos, luz noturna e o aviso de volume e brilho.",
+		                                                  "Monitors, applications' scale, night light and the volume and brightness pop-up.")
 	case .Windows:
 		return .App_Window, tr(w, "Janelas", "Windows"), tr(w, "Lado a lado ou flutuantes, bordas, barra de título e animações.", "Tiling or floating, borders, title bars and animations.")
 	case .Desktop:
@@ -762,7 +769,7 @@ settings_action :: proc(w: ^Wizard, action: Action, arg: int) {
 			s.notif_position = opt
 			set_edit(w, "notifications.position", json.String(opt == 1 ? "bottom-right" : "top-right"))
 		case:
-			if !windows_choice(w, ctrl, opt) && !display_choice(w, ctrl, opt) && !launcher_choice(w, ctrl, opt) { return }
+			if !windows_choice(w, ctrl, opt) && !display_choice(w, ctrl, opt) && !launcher_choice(w, ctrl, opt) && !monitors_choice(w, ctrl, opt) { return }
 		}
 		settings_changed(w, .Values)
 	case .Win_Tab:
@@ -847,7 +854,8 @@ step_control :: proc(w: ^Wizard, ctrl: Control, dir: int) {
 		s.clip_max = clamp(s.clip_max + 10 * dir, 10, 500)
 		set_edit(w, "clipboard.maxItems", json.Integer(s.clip_max))
 	case:
-		if !windows_step(w, ctrl, dir) && !display_step(w, ctrl, dir) && !lock_step(w, ctrl, dir) && !launcher_step(w, ctrl, dir) { return }
+		if !windows_step(w, ctrl, dir) && !display_step(w, ctrl, dir) && !lock_step(w, ctrl, dir) && !launcher_step(w, ctrl, dir) &&
+		   !monitors_step(w, ctrl, dir) { return }
 	}
 	settings_changed(w, .Values)
 }
@@ -878,7 +886,8 @@ toggle_control :: proc(w: ^Wizard, ctrl: Control) {
 		s.theme_apps = !s.theme_apps
 		set_edit(w, "appearance.themeApps", json.Boolean(s.theme_apps))
 	case:
-		if !windows_toggle(w, ctrl) && !display_toggle(w, ctrl) && !lock_toggle(w, ctrl) && !areas_toggle(w, ctrl) && !launcher_toggle(w, ctrl) { return }
+		if !windows_toggle(w, ctrl) && !display_toggle(w, ctrl) && !lock_toggle(w, ctrl) && !areas_toggle(w, ctrl) && !launcher_toggle(w, ctrl) &&
+		   !monitors_toggle(w, ctrl) { return }
 	}
 	settings_changed(w, .Values)
 }
@@ -1061,6 +1070,7 @@ settings_tick :: proc(w: ^Wizard, now: f64) {
 	effects_tick(w, now)
 	palette_view_tick(w, now)
 	scr_tick(w, now)
+	monitors_tick(w, now)
 }
 
 @(private)
@@ -1076,6 +1086,7 @@ settings_timeout :: proc(w: ^Wizard, now: f64) -> f64 {
 	if ft := effects_timeout(w, now); ft >= 0 && (t < 0 || ft < t) { t = ft }
 	if pt := palette_view_timeout(w, now); pt >= 0 && (t < 0 || pt < t) { t = pt }
 	if st := scr_timeout(w); st >= 0 && (t < 0 || st < t) { t = st }
+	if mt := monitors_timeout(w, now); mt >= 0 && (t < 0 || mt < t) { t = mt }
 	return t
 }
 
@@ -1099,7 +1110,7 @@ settings_save :: proc(w: ^Wizard) {
 			}
 		}
 	}
-	if len(s.edits) == 0 && !s.sc.dirty && !s.themes_dirty && !s.lay.dirty && !s.scr.dirty { return }
+	if len(s.edits) == 0 && !s.sc.dirty && !s.themes_dirty && !s.lay.dirty && !s.scr.dirty && !s.mon.profiles_dirty { return }
 	theme_changed := "appearance.theme" in s.edits || "appearance.variant" in s.edits
 	themes_changed := s.themes_dirty
 	if !write_edits(w) {
@@ -1111,6 +1122,7 @@ settings_save :: proc(w: ^Wizard) {
 	s.themes_dirty = false
 	s.lay.dirty = false
 	s.scr.dirty = false
+	s.mon.profiles_dirty = false
 	s.saved_any = true
 	if theme_changed { update_alacritty(w) }
 	if themes_changed { remove_stale_alacritty(w) }
@@ -1160,6 +1172,10 @@ write_edits :: proc(w: ^Wizard) -> bool {
 	if w.set.scr.dirty {
 		// Rewritten whole: renamed and deleted scripts must disappear (bar.start/center/end follow below).
 		json_set(&root, {"bar", "scripts"}, scripts_json(w))
+	}
+	if w.set.mon.profiles_dirty {
+		// Rewritten whole: deleted profiles must disappear (their keys may hold dots).
+		json_set(&root, {"displays", "profiles"}, profiles_json(w))
 	}
 	if w.set.lay.dirty {
 		json_set(&root, {"bar", "start"}, lay_json(w, 0))

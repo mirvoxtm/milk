@@ -88,7 +88,7 @@ wallpaper_source :: proc(cfg: ^config.Config, runtime_root: string, index: int, 
 // background in the bar's colour) in the configured mode at the screen's size.
 @(private)
 Wallpaper_Target :: struct {
-	key:    string,        // temp: identifies the drawn result (picture, its stamp, mode, screen size)
+	key:    string,        // temp: identifies the drawn result (picture, its stamp, mode, monitors)
 	source: string,        // temp: the picture, "" = plain background
 	fi:     os.File_Info,
 	mode:   string,
@@ -97,21 +97,32 @@ Wallpaper_Target :: struct {
 
 @(private)
 wallpaper_target :: proc(d: ^Daemon, index: int) -> (t: Wallpaper_Target, ok: bool) {
-	screen := tx.screen_rect(d.c)
+	layout := monitors_key(d.c)
 	t.mode = d.cfg.linux.wallpaper_mode
 	source, found := wallpaper_source(d.cfg, d.runtime_root, index)
 	if found {
 		fi, err := os.stat(source, context.temp_allocator)
 		if err != nil { return }
 		t.source, t.fi = source, fi
-		t.key = fmt.tprintf("%s|%d|%d|%s|%dx%d", source, time.time_to_unix_nano(fi.modification_time), fi.size, t.mode, screen.w, screen.h)
+		t.key = fmt.tprintf("%s|%d|%d|%s|%s", source, time.time_to_unix_nano(fi.modification_time), fi.size, t.mode, layout)
 	} else {
 		// No wallpaper for this area: a plain background in the bar's colour.
 		t.solid = solid_color(d)
 		t.mode = "tile"
-		t.key = fmt.tprintf("solid|%02X%02X%02X|%dx%d", t.solid.r, t.solid.g, t.solid.b, screen.w, screen.h)
+		t.key = fmt.tprintf("solid|%02X%02X%02X|%s", t.solid.r, t.solid.g, t.solid.b, layout)
 	}
 	return t, true
+}
+
+// The screen size and every monitor on it: feh draws the picture once per
+// monitor, so the same screen size with the monitors moved is another drawing.
+@(private)
+monitors_key :: proc(c: ^tx.Connection) -> string {
+	screen := tx.screen_rect(c)
+	b := strings.builder_make(context.temp_allocator)
+	fmt.sbprintf(&b, "%dx%d", screen.w, screen.h)
+	for m in tx.monitors(c) { fmt.sbprintf(&b, ";%dx%d+%d+%d", m.rect.w, m.rect.h, m.rect.x, m.rect.y) }
+	return strings.to_string(b)
 }
 
 // Show the wallpaper of area `index`; keeps the current one when nothing
