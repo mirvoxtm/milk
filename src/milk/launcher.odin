@@ -67,12 +67,16 @@ cmd_launcher :: proc(opts: ^Options) -> int {
 
 	// rofi shows a script mode by its name: the apps tab is named in milk's language.
 	apps := tr(lang, "Aplicativos", "Apps")
+	// The Files tab searches the whole folder with recursivebrowser (rofi 1.7.6);
+	// older rofis (Debian 12, Ubuntu 24.04, Mint 22) only browse it with filebrowser,
+	// and refuse to start at all when asked for a mode they lack.
+	files := rofi_has_mode(rofi, "recursivebrowser") ? "recursivebrowser" : "filebrowser"
 	modes := make([dynamic]string, context.temp_allocator)
 	for t in lo.tabs {
 		switch t {
 		case "apps":    append(&modes, fmt.tprintf("%s:'%s' launcher script", apps, exe))
 		case "windows": append(&modes, "window")
-		case "files":   append(&modes, "recursivebrowser")
+		case "files":   append(&modes, files)
 		case "run":     append(&modes, "run")
 		}
 	}
@@ -83,7 +87,7 @@ cmd_launcher :: proc(opts: ^Options) -> int {
 		switch opts.value {
 		case "apps":    show = apps
 		case "windows": show = "window"
-		case "files":   show = "recursivebrowser"
+		case "files":   show = files
 		case "run":     show = "run"
 		}
 		known := false
@@ -100,14 +104,19 @@ cmd_launcher :: proc(opts: ^Options) -> int {
 	argv := make([dynamic]string, context.temp_allocator)
 	append(&argv, rofi, "-show", show, "-modes", strings.join(modes[:], ","),
 	       "-display-window", tr(lang, "Janelas", "Windows"),
-	       "-display-recursivebrowser", tr(lang, "Arquivos", "Files"),
+	       fmt.tprintf("-display-%s", files), tr(lang, "Arquivos", "Files"),
 	       "-display-run", tr(lang, "Executar", "Run"))
 	// milk's theme with the launcher's settings: a file of its own, since rofi
 	// takes the Files tab's settings only from a file (braces doubled for fmt).
 	b := strings.builder_make(context.temp_allocator)
 	if theme := rofi_theme_path(); os.exists(theme) { fmt.sbprintf(&b, "@import \"%s\"\n", rasi_escape(theme)) }
-	fmt.sbprintf(&b, "configuration {{\n    matching: \"%s\";\n    recursivebrowser {{ directory: \"%s\"; filter-regex: \"%s\"; command: \"xdg-open\"; }}\n}}\n",
-	             lo.matching, rasi_escape(folder), rasi_escape(FILES_FILTER))
+	if files == "recursivebrowser" {
+		fmt.sbprintf(&b, "configuration {{\n    matching: \"%s\";\n    recursivebrowser {{ directory: \"%s\"; filter-regex: \"%s\"; command: \"xdg-open\"; }}\n}}\n",
+		             lo.matching, rasi_escape(folder), rasi_escape(FILES_FILTER))
+	} else {
+		// No command: rofi 1.7.5 then ignores the whole section (it opens files with xdg-open anyway).
+		fmt.sbprintf(&b, "configuration {{\n    matching: \"%s\";\n    filebrowser {{ directory: \"%s\"; }}\n}}\n", lo.matching, rasi_escape(folder))
+	}
 	fmt.sbprintf(&b, "window {{ width: %dpx; }}\nlistview {{ lines: %d; }}\nentry {{ placeholder: \"%s\"; }}\n", lo.width, lo.lines, rasi_escape(placeholder))
 	if opts.at != "" && lo.near_button {
 		if place, monitor, ok := launcher_place(opts.at); ok {
@@ -126,6 +135,47 @@ cmd_launcher :: proc(opts: ^Options) -> int {
 // What the Files tab leaves out: hidden files and folders, and build caches.
 @(private="file")
 FILES_FILTER :: `(.*/)?(\..*|node_modules|__pycache__)(/.*)?`
+
+// Whether this rofi has `mode`: `rofi -help` lists them under "Detected modes:"
+// ("• +window", "• filebrowser"...). The list is kept in the launcher's cache
+// for this rofi binary (path, size, time), so opening the launcher runs rofi once.
+// When rofi cannot tell, the answer is no (the modes milk falls back on exist in every rofi).
+@(private="file")
+rofi_has_mode :: proc(rofi, mode: string) -> bool {
+	fi, serr := os.stat(rofi, context.temp_allocator)
+	if serr != nil { return false }
+	stamp := fmt.tprintf("%s|%d|%d", rofi, fi.size, time.time_to_unix_nano(fi.modification_time))
+	cache := join({launcher_cache_dir(), "rofi-modes"})
+	modes := ""
+	if data, err := os.read_entire_file(cache, context.temp_allocator); err == nil {
+		text := string(data)
+		if nl := strings.index_byte(text, '\n'); nl >= 0 && text[:nl] == stamp { modes = text[nl + 1:] }
+	}
+	if modes == "" {
+		_, stdout, _, err := os.process_exec(os.Process_Desc{command = {rofi, "-help"}}, context.temp_allocator)
+		if err != nil { return false }
+		b := strings.builder_make(context.temp_allocator)
+		listing := false
+		for line in strings.split_lines(string(stdout), context.temp_allocator) {
+			s := strings.trim_space(line)
+			if s == "Detected modes:" { listing = true; continue }
+			if !listing { continue }
+			if s == "" { break }
+			s = strings.trim_left_space(strings.trim_prefix(strings.trim_prefix(s, "•"), "*"))
+			fmt.sbprintf(&b, "%s\n", strings.trim_prefix(s, "+")) // "+": a mode loaded from a plugin or script
+		}
+		modes = strings.to_string(b)
+		if modes == "" { return false }
+		dir := launcher_cache_dir()
+		if !os.is_directory(dir) { os.make_directory_all(dir) }
+		tmp := fmt.tprintf("%s.%d.tmp", cache, os.get_pid())
+		if os.write_entire_file(tmp, transmute([]u8)strings.concatenate({stamp, "\n", modes}, context.temp_allocator)) == nil {
+			if os.rename(tmp, cache) != nil { os.remove(tmp) }
+		}
+	}
+	for m in strings.split_lines(modes, context.temp_allocator) { if m == mode { return true } }
+	return false
+}
 
 // The launcher's theme for this run, written aside and renamed (another
 // launcher may be reading the previous one).

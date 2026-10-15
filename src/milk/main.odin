@@ -603,6 +603,7 @@ run :: proc(opts: ^Options, cfg: ^config.Config) -> int {
 	r := Runner{opts = opts, cfg = cfg, c = c}
 	apptheme_apply(&r) // GTK and Qt apps follow the theme (apptheme.odin)
 	defer apptheme_stop(&r)
+	oobe.fit_alacritty_config() // milk.toml in the layout of the Alacritty installed
 	mask := desktop.ROOT_EVENT_MASK
 	if cfg.bar.enabled && !opts.no_bar { mask |= bar.ROOT_EVENT_MASK }
 	if cfg.wm.enabled && !opts.no_wm { mask |= wm.ROOT_EVENT_MASK }

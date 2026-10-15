@@ -9,6 +9,7 @@ import "core:fmt"
 import "core:log"
 import "core:os"
 import "core:path/filepath"
+import "core:strconv"
 import "core:strings"
 import config "../config"
 
@@ -229,12 +230,7 @@ write_json :: proc(root: json.Object, path: string) -> bool {
 // an `import = [...]` line is touched.
 @(private)
 update_alacritty :: proc(w: ^Wizard) {
-	target := ""
-	if v, found := os.lookup_env(ALACRITTY_ENV, context.temp_allocator); found && v != "" {
-		target = v
-	} else {
-		target = join_path({home_dir(), ".config", "alacritty", "milk.toml"})
-	}
+	target := alacritty_config_path()
 	data, err := os.read_entire_file(target, context.temp_allocator)
 	if err != nil { return }
 	theme_name, colors, dark := chosen_theme(w)
@@ -304,6 +300,76 @@ update_alacritty :: proc(w: ^Wizard) {
 		return
 	}
 	log.infof("Setup: %s now imports %s", target, wanted)
+}
+
+// ~/.config/alacritty/milk.toml, or $MILK_ALACRITTY_CONFIG.
+@(private)
+alacritty_config_path :: proc() -> string {
+	if v, found := os.lookup_env(ALACRITTY_ENV, context.temp_allocator); found && v != "" { return v }
+	return join_path({home_dir(), ".config", "alacritty", "milk.toml"})
+}
+
+// Alacritty 0.14 moved `import` into a [general] table and calls the top-level
+// form deprecated; 0.13, the first to read TOML (Ubuntu 24.04, Mint 22), does
+// not know [general] ("Unused config key: general"). Either way every terminal
+// opens with a yellow warning bar, so milk.toml follows the Alacritty that is
+// installed (milk runs this at start): the `[general]` line goes or comes.
+// Only milk's own layout is changed: a top-level import with nothing but
+// comments after it before the first table, or a [general] that is the first table
+// (everything that 0.14 put in [general] was top-level before).
+fit_alacritty_config :: proc() {
+	target := alacritty_config_path()
+	data, rerr := os.read_entire_file(target, context.temp_allocator)
+	if rerr != nil { return }
+	_, stdout, _, perr := os.process_exec(os.Process_Desc{command = {"alacritty", "--version"}}, context.temp_allocator)
+	if perr != nil { return }
+	words := strings.fields(string(stdout), context.temp_allocator) // "alacritty 0.13.2", "alacritty 0.17.0 (94e7c887)"
+	if len(words) < 2 { return }
+	parts := strings.split(words[1], ".", context.temp_allocator)
+	if len(parts) < 2 { return }
+	major, mok := strconv.parse_int(parts[0], 10)
+	minor, nok := strconv.parse_int(parts[1], 10)
+	if !mok || !nok { return }
+	want_general := major > 0 || minor >= 14
+
+	lines := strings.split(string(data), "\n", context.temp_allocator)
+	first_table, import_line := -1, -1
+	has_general := false
+	for line, i in lines {
+		s := strings.trim_space(line)
+		if strings.has_prefix(s, "[") {
+			if first_table < 0 { first_table = i }
+			if s == "[general]" { has_general = true }
+		} else if eq := strings.index_byte(s, '='); first_table < 0 && eq > 0 && strings.trim_space(s[:eq]) == "import" {
+			import_line = i
+		}
+	}
+	out := make([dynamic]string, context.temp_allocator)
+	switch {
+	case want_general && import_line >= 0 && !has_general:
+		for line in lines[import_line + 1:first_table < 0 ? len(lines) : first_table] {
+			s := strings.trim_space(line)
+			if s != "" && !strings.has_prefix(s, "#") { return } // other top-level keys after it: not milk's layout
+		}
+		append(&out, ..lines[:import_line])
+		append(&out, "[general]")
+		append(&out, ..lines[import_line:])
+	case !want_general && first_table >= 0 && strings.trim_space(lines[first_table]) == "[general]":
+		append(&out, ..lines[:first_table])
+		append(&out, ..lines[first_table + 1:])
+	case:
+		return
+	}
+	tmp := fmt.tprintf("%s.tmp", target)
+	if werr := os.write_entire_file(tmp, strings.join(out[:], "\n", context.temp_allocator)); werr != nil {
+		log.warnf("Cannot write %s: %v", tmp, werr)
+		return
+	}
+	if err := os.rename(tmp, target); err != nil {
+		log.warnf("Cannot update %s: %v", target, err)
+		return
+	}
+	log.infof("%s: import %s for Alacritty %d.%d", target, want_general ? "moved into [general]" : "moved to the top level", major, minor)
 }
 
 @(private)

@@ -1009,7 +1009,15 @@ if [ ! -f "$alacritty_dir/milk.toml" ]; then
     mkdir -p "$alacritty_dir"
     imports="\"$MILK/contrib/alacritty/milk-light.toml\""
     [ -f "$alacritty_dir/alacritty.toml" ] && imports="\"$alacritty_dir/alacritty.toml\", $imports"
-    printf '# Alacritty inside the milk session (the setup wizard switches the theme file).\n[general]\nimport = [%s]\n' "$imports" > "$alacritty_dir/milk.toml"
+    # Alacritty 0.14 reads import from [general]; 0.13 (Ubuntu 24.04, Mint 22)
+    # only at the top level, and each shows a warning bar for the other form
+    # (milk keeps it right at start when Alacritty changes).
+    general="[general]\n"
+    alacritty_version=$(alacritty --version 2>/dev/null | awk '{print $2}')
+    case "$alacritty_version" in
+        0.[0-9].*|0.1[0-3].*) general= ;;
+    esac
+    printf "# Alacritty inside the milk session (the setup wizard switches the theme file).\n${general}import = [%s]\n" "$imports" > "$alacritty_dir/milk.toml"
     ok "$(t "Criado $alacritty_dir/milk.toml" "Created $alacritty_dir/milk.toml" "Creado $alacritty_dir/milk.toml")"
 else
     # The theme import follows the clone being installed (same light/dark file).
